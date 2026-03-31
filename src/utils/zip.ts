@@ -1,67 +1,60 @@
 import pako from 'pako';
 
 export async function unzip(buffer: ArrayBuffer): Promise<{ files: { name: string; content: ArrayBuffer | string }[] }> {
-  try {
-    const result: { files: { name: string; content: ArrayBuffer | string }[] } = { files: [] };
+  const result: { files: { name: string; content: ArrayBuffer | string }[] } = { files: [] };
+  
+  const view = new DataView(buffer);
+  const uint8Array = new Uint8Array(buffer);
+  
+  if (view.getUint32(0, true) !== 0x04034b50) {
+    throw new Error('Invalid ZIP file: missing local file header');
+  }
+  
+  const textDecoder = new TextDecoder();
+  let offset = 0;
+  
+  while (offset < buffer.byteLength) {
+    const signature = view.getUint32(offset, true);
+    if (signature !== 0x04034b50) break;
     
-    const uint8Array = new Uint8Array(buffer);
-    const decompressed = pako.inflate(uint8Array);
-    const textDecoder = new TextDecoder();
+    const versionNeeded = view.getUint16(offset + 4, true);
+    const flags = view.getUint16(offset + 6, true);
+    const compressionMethod = view.getUint16(offset + 8, true);
+    const crc32 = view.getUint32(offset + 14, true);
+    const compressedSize = view.getUint32(offset + 18, true);
+    const uncompressedSize = view.getUint32(offset + 22, true);
+    const nameLen = view.getUint16(offset + 26, true);
+    const extraLen = view.getUint16(offset + 28, true);
     
-    const headerSize = 30;
-    let offset = headerSize;
+    offset += 30;
     
-    while (offset < decompressed.length) {
-      readUint32LE(decompressed, offset);
-      readUint16LE(decompressed, offset + 4);
-      readUint16LE(decompressed, offset + 6);
-      const compression = readUint16LE(decompressed, offset + 8);
-      readUint32LE(decompressed, offset + 14);
-      const compressedSize = readUint32LE(decompressed, offset + 18);
-      const uncompressedSize = readUint32LE(decompressed, offset + 22);
-      const nameLen = readUint16LE(decompressed, offset + 26);
-      const extraLen = readUint16LE(decompressed, offset + 28);
-      
-      offset += 30;
-      
-      const nameBytes = decompressed.slice(offset, offset + nameLen);
-      const name = textDecoder.decode(nameBytes);
-      offset += nameLen + extraLen;
-      
-      let content: ArrayBuffer | string;
-      if (compression === 0) {
-        content = decompressed.slice(offset, offset + uncompressedSize).buffer;
-      } else if (compression === 8) {
-        const compressed = decompressed.slice(offset, offset + compressedSize);
-        const inflated = pako.inflate(compressed);
-        if (name.endsWith('.json') || name.endsWith('.txt') || name.endsWith('.xml')) {
-          content = textDecoder.decode(inflated.buffer);
-        } else {
-          content = inflated.buffer;
-        }
+    const nameBytes = uint8Array.slice(offset, offset + nameLen);
+    const name = textDecoder.decode(nameBytes);
+    offset += nameLen + extraLen;
+    
+    let content: ArrayBuffer | string;
+    if (compressionMethod === 0) {
+      content = uint8Array.slice(offset, offset + uncompressedSize).buffer;
+    } else if (compressionMethod === 8) {
+      const compressed = uint8Array.slice(offset, offset + compressedSize);
+      const inflated = pako.inflate(compressed);
+      if (name.endsWith('.json') || name.endsWith('.txt') || name.endsWith('.xml')) {
+        content = textDecoder.decode(inflated.buffer);
       } else {
-        content = decompressed.slice(offset, offset + uncompressedSize).buffer;
+        content = inflated.buffer;
       }
-      
-      if (name && !name.endsWith('/')) {
-        result.files.push({ name, content });
-      }
-      
-      offset += compressedSize || uncompressedSize;
+    } else {
+      throw new Error(`Unsupported compression method: ${compressionMethod}`);
     }
     
-    return result;
-  } catch (err) {
-    throw err;
+    offset += compressedSize;
+    
+    if (name && !name.endsWith('/')) {
+      result.files.push({ name, content });
+    }
   }
-}
-
-function readUint32LE(data: Uint8Array, offset: number): number {
-  return data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16) | (data[offset + 3] << 24);
-}
-
-function readUint16LE(data: Uint8Array, offset: number): number {
-  return data[offset] | (data[offset + 1] << 8);
+  
+  return result;
 }
 
 export function zip(files: { name: string; content: string | ArrayBuffer }[]): ArrayBuffer {
@@ -75,8 +68,8 @@ export function zip(files: { name: string; content: string | ArrayBuffer }[]): A
   writeUint16LE(header, 10, 0);
   writeUint16LE(header, 12, 0);
   writeUint16LE(header, 14, 0);
-  writeUint16LE(header, 22, 0);
-  writeUint16LE(header, 24, 0);
+  writeUint32LE(header, 22, 0);
+  writeUint32LE(header, 24, 0);
   writeUint16LE(header, 26, 0);
   writeUint16LE(header, 28, 0);
   parts.push(header);
