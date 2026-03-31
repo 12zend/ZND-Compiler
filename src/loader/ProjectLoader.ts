@@ -4,6 +4,7 @@ import { AssetCache } from './AssetCache';
 
 const DEMO_PROJECT_URL = 'https://raw.githubusercontent.com/LLK/scratch-vm/develop/test/fixtures/cat.sprite3';
 
+const TRAMPOLINE_BASE = 'https://trampoline.turbowarp.org';
 const SCRATCH_API_BASE = 'https://projects.scratch.mit.edu';
 const SCRATCH_CDN_BASE = 'https://assets.scratch.mit.edu';
 
@@ -44,6 +45,7 @@ export class ProjectLoader {
     }
 
     const endpoints = [
+      `${TRAMPOLINE_BASE}/project/${projectId}`,
       `${SCRATCH_API_BASE}/api/projects/${projectId}/`,
       `${SCRATCH_API_BASE}/internalapi/project/${projectId}/get/`
     ];
@@ -95,7 +97,7 @@ export class ProjectLoader {
     const cached = await this.cache.getCompiled(projectHash);
     if (cached) return cached;
 
-    const response = await fetchWithTimeout(`${SCRATCH_CDN_BASE}/internalapi/project/${projectHash}/get/`, {
+    const response = await fetchWithTimeout(`${TRAMPOLINE_BASE}/project/${projectHash}`, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Referer': 'https://scratch.mit.edu/'
@@ -188,7 +190,7 @@ export class ProjectLoader {
 
       try {
         const response = await fetchWithTimeout(
-          `${SCRATCH_CDN_BASE}/internalapi/asset/${asset.md5ext}/get/`,
+          `${TRAMPOLINE_BASE}/asset/${asset.md5ext}`,
           {
             headers: {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
