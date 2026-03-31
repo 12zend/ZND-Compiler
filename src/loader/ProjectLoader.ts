@@ -53,7 +53,8 @@ export class ProjectLoader {
         const response = await fetchWithTimeout(endpoint, {
           headers: { 
             'Accept': 'application/json',
-            'User-Agent': 'ZND-Compiler/1.0'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://scratch.mit.edu/'
           }
         });
 
@@ -94,7 +95,12 @@ export class ProjectLoader {
     const cached = await this.cache.getCompiled(projectHash);
     if (cached) return cached;
 
-    const response = await fetchWithTimeout(`${SCRATCH_CDN_BASE}/internalapi/project/${projectHash}/get/`);
+    const response = await fetchWithTimeout(`${SCRATCH_CDN_BASE}/internalapi/project/${projectHash}/get/`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://scratch.mit.edu/'
+      }
+    });
     if (!response.ok) {
       throw new ProjectLoadError(`Failed to fetch project hash ${projectHash}`, response.status);
     }
@@ -183,7 +189,12 @@ export class ProjectLoader {
       try {
         const response = await fetchWithTimeout(
           `${SCRATCH_CDN_BASE}/internalapi/asset/${asset.md5ext}/get/`,
-          {},
+          {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Referer': 'https://scratch.mit.edu/'
+            }
+          },
           ASSET_TIMEOUT
         );
         if (response.ok) {
