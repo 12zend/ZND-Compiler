@@ -5,6 +5,12 @@ import { AssetCache } from './AssetCache';
 const SCRATCH_API_BASE = 'https://projects.scratch.mit.edu';
 const SCRATCH_CDN_BASE = 'https://assets.scratch.mit.edu';
 
+const CORS_PROXIES = [
+  '',
+  'https://api.allorigins.win/raw?url=',
+  'https://corsproxy.io/?',
+];
+
 const DEFAULT_TIMEOUT = 30000;
 const ASSET_TIMEOUT = 10000;
 
@@ -28,6 +34,21 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeout:
   }
 }
 
+async function fetchWithCorsProxy(url: string, options: RequestInit = {}, timeout: number = DEFAULT_TIMEOUT): Promise<Response> {
+  for (const proxy of CORS_PROXIES) {
+    try {
+      const targetUrl = proxy + encodeURIComponent(url);
+      const response = await fetchWithTimeout(targetUrl, options, timeout);
+      if (response.ok || response.status !== 0) {
+        return response;
+      }
+    } catch (err) {
+      console.warn(`Proxy ${proxy} failed:`, err);
+    }
+  }
+  throw new ProjectLoadError('All CORS proxies failed', 0);
+}
+
 export class ProjectLoader {
   private cache: AssetCache;
 
@@ -41,26 +62,51 @@ export class ProjectLoader {
       return cached;
     }
 
-    const response = await fetchWithTimeout(`${SCRATCH_API_BASE}/api/projects/${projectId}/`, {
-      headers: { 'Accept': 'application/json' }
-    });
+    let lastError: Error | null = null;
+    const endpoints = [
+      `${SCRATCH_API_BASE}/api/projects/${projectId}/`,
+      `${SCRATCH_API_BASE}/internalapi/project/${projectId}/get/`
+    ];
 
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new ProjectLoadError(`Project ${projectId} not found`, 404);
+    for (const endpoint of endpoints) {
+      try {
+        const response = await fetchWithCorsProxy(endpoint, {
+          headers: { 
+            'Accept': 'application/json',
+            'User-Agent': 'ZND-Compiler/1.0'
+          }
+        });
+
+        if (response.ok) {
+          const contentType = response.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const projectJson = await response.json();
+            return this.extractFromJSON(projectId, projectJson);
+          }
+        }
+
+        if (response.status === 404) {
+          throw new ProjectLoadError(`Project ${projectId} not found`, 404);
+        }
+
+        lastError = new Error(`HTTP ${response.status}`);
+      } catch (err) {
+        lastError = err as Error;
+        console.warn(`Failed to fetch from ${endpoint}:`, err);
       }
-      throw new ProjectLoadError(`Failed to fetch project ${projectId}`, response.status);
     }
 
-    const projectJson = await response.json();
-    return this.extractFromJSON(projectId, projectJson);
+    throw new ProjectLoadError(
+      `Could not connect to Scratch servers. The project may not exist, or there may be a network/CORS issue. Original error: ${lastError?.message || 'Unknown'}`,
+      0
+    );
   }
 
   async fetchByHash(projectHash: string): Promise<SB3Project> {
     const cached = await this.cache.getCompiled(projectHash);
     if (cached) return cached;
 
-    const response = await fetchWithTimeout(`${SCRATCH_CDN_BASE}/internalapi/project/${projectHash}/get/`);
+    const response = await fetchWithCorsProxy(`${SCRATCH_CDN_BASE}/internalapi/project/${projectHash}/get/`);
     if (!response.ok) {
       throw new ProjectLoadError(`Failed to fetch project hash ${projectHash}`, response.status);
     }
@@ -147,7 +193,7 @@ export class ProjectLoader {
       }
 
       try {
-        const response = await fetchWithTimeout(
+        const response = await fetchWithCorsProxy(
           `${SCRATCH_CDN_BASE}/internalapi/asset/${asset.md5ext}/get/`,
           {},
           ASSET_TIMEOUT
