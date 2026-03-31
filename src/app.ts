@@ -1,11 +1,11 @@
 import { createZND, ZNDInstance, ZNDConfig } from './index';
-import type { Benchmark } from './utils/benchmark';
+import { ProjectLoader, ProjectLoadError } from './loader/ProjectLoader';
 
 export type Route = 'home' | 'player' | 'error';
 
 export interface AppState {
   route: Route;
-  projectId: string | null;
+  projectName: string | null;
   error: string | null;
   loading: boolean;
   instance: ZNDInstance | null;
@@ -13,24 +13,20 @@ export interface AppState {
 
 const state: AppState = {
   route: 'home',
-  projectId: null,
+  projectName: null,
   error: null,
   loading: false,
   instance: null
 };
 
-const routes: Record<string, (params: Record<string, string>) => void> = {
-  '^/?$': () => renderHome(),
-  '^/(\\d+)/?$': (params) => renderPlayer(params[1]),
-  '^/project/(\\d+)/?$': (params) => renderPlayer(params[1])
-};
+const projectLoader = new ProjectLoader();
 
 const templates: Record<string, string> = {
   loading: `
     <div class="loading-screen">
       <div class="spinner"></div>
       <p class="loading-text">Loading project...</p>
-      <p class="loading-sub" id="loadingStatus">Fetching from Scratch...</p>
+      <p class="loading-sub" id="loadingStatus">Processing file...</p>
       <div class="progress-bar">
         <div class="progress-fill" id="progressFill"></div>
       </div>
@@ -39,19 +35,17 @@ const templates: Record<string, string> = {
   error: `
     <div class="error-screen">
       <div class="error-icon">⚠️</div>
-      <h2>Project Not Found</h2>
+      <h2>Error</h2>
       <p class="error-message">{{message}}</p>
       <div class="error-actions">
-        <button class="btn-primary" onclick="window.history.back()">Go Back</button>
-        <a href="/" class="btn-secondary">Home</a>
+        <button class="btn-primary" onclick="location.reload()">Try Again</button>
       </div>
-      <p class="error-hint">The project may be private, deleted, or the ID is invalid.</p>
     </div>
   `,
   player: `
     <div class="player-container">
       <div class="player-header">
-        <a href="/" class="back-link">← Back</a>
+        <button class="back-link" onclick="location.reload()">← New Project</button>
         <h1 class="project-title" id="projectTitle">Loading...</h1>
         <div class="player-controls">
           <button id="playPauseBtn" class="control-btn">▶</button>
@@ -62,8 +56,8 @@ const templates: Record<string, string> = {
         <canvas id="scratchCanvas" width="480" height="360"></canvas>
         <div class="player-info">
           <div class="info-row">
-            <span class="info-label">Project ID:</span>
-            <span id="projectIdDisplay" class="info-value">-</span>
+            <span class="info-label">Project:</span>
+            <span id="projectName" class="info-value">-</span>
           </div>
           <div class="info-row">
             <span class="info-label">Status:</span>
@@ -200,36 +194,55 @@ const globalCSS = `
   .error-message { color: var(--text-secondary); margin-bottom: 24px; max-width: 400px; }
   
   .error-actions { display: flex; gap: 12px; }
-  .error-hint { margin-top: 24px; font-size: 0.85rem; color: var(--text-secondary); }
   
   /* Home Page */
   .home { padding: 60px 20px; text-align: center; }
   .home h1 { font-size: 2.5rem; margin-bottom: 12px; color: var(--accent); }
   .home .subtitle { color: var(--text-secondary); margin-bottom: 48px; font-size: 1.1rem; }
   
-  .search-box {
-    max-width: 500px;
+  .upload-zone {
+    max-width: 600px;
     margin: 0 auto 40px;
   }
   
-  .search-form {
-    display: flex;
-    gap: 12px;
-  }
-  
-  .search-input {
-    flex: 1;
-    padding: 16px 20px;
-    border: 2px solid var(--bg-tertiary);
-    border-radius: 8px;
+  .drop-zone {
+    border: 3px dashed var(--bg-tertiary);
+    border-radius: 16px;
+    padding: 60px 40px;
     background: var(--bg-secondary);
-    color: var(--text-primary);
-    font-size: 1.1rem;
-    transition: border-color 0.2s;
+    transition: all 0.3s;
+    cursor: pointer;
   }
   
-  .search-input:focus { outline: none; border-color: var(--accent); }
-  .search-input::placeholder { color: var(--text-secondary); }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(0, 217, 255, 0.05);
+  }
+  
+  .drop-zone-icon { font-size: 3rem; margin-bottom: 16px; }
+  .drop-zone-title { font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; }
+  .drop-zone-subtitle { color: var(--text-secondary); margin-bottom: 20px; }
+  .drop-zone-formats { color: var(--text-secondary); font-size: 0.85rem; }
+  
+  .file-input { display: none; }
+  
+  .file-selected {
+    margin-top: 20px;
+    padding: 16px;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    display: none;
+  }
+  
+  .file-selected.visible { display: block; }
+  
+  .file-name { font-weight: 600; color: var(--accent); }
+  .file-size { color: var(--text-secondary); font-size: 0.9rem; margin-top: 4px; }
+  
+  .upload-btn {
+    margin-top: 16px;
+    width: 100%;
+  }
   
   .features {
     display: grid;
@@ -262,8 +275,11 @@ const globalCSS = `
   }
   
   .back-link {
+    background: none;
+    border: none;
     color: var(--accent);
-    text-decoration: none;
+    cursor: pointer;
+    font-size: 1rem;
     font-weight: 500;
   }
   .back-link:hover { text-decoration: underline; }
@@ -342,36 +358,17 @@ const globalCSS = `
   .player-footer a { color: var(--accent); }
 `;
 
-class Router {
-  private routes: Array<{ pattern: RegExp; handler: (params: string[]) => void }> = [];
-
-  addRoute(pattern: string, handler: (params: string[]) => void): void {
-    this.routes.push({ pattern: new RegExp(pattern), handler });
-  }
-
-  navigate(path: string): void {
-    for (const route of this.routes) {
-      const match = path.match(route.pattern);
-      if (match) {
-        route.handler(match.slice(1));
-        return;
-      }
-    }
-    renderError('Page not found');
-  }
-
-  getPath(): string {
-    return window.location.pathname;
-  }
-}
-
-const router = new Router();
-
 function setLoadingProgress(percent: number, status: string): void {
   const progressFill = document.getElementById('progressFill');
   const loadingStatus = document.getElementById('loadingStatus');
   if (progressFill) progressFill.style.width = `${percent}%`;
   if (loadingStatus) loadingStatus.textContent = status;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
 function renderHome(): void {
@@ -382,14 +379,20 @@ function renderHome(): void {
       <h1>ZND Compiler</h1>
       <p class="subtitle">High-performance Scratch project player</p>
       
-      <div class="search-box">
-        <form class="search-form" onsubmit="event.preventDefault(); handleSearch();">
-          <input type="text" id="projectInput" class="search-input" 
-            placeholder="Enter Scratch Project ID (e.g., 10128409)" 
-            pattern="\\d+"
-            required>
-          <button type="submit" class="btn btn-primary">Play</button>
-        </form>
+      <div class="upload-zone">
+        <div class="drop-zone" id="dropZone">
+          <div class="drop-zone-icon">📁</div>
+          <div class="drop-zone-title">Drop your .sb3 file here</div>
+          <div class="drop-zone-subtitle">or click to browse</div>
+          <div class="drop-zone-formats">Supports .sb3 files exported from Scratch</div>
+          <input type="file" id="fileInput" class="file-input" accept=".sb3">
+        </div>
+        
+        <div class="file-selected" id="fileSelected">
+          <div class="file-name" id="fileName"></div>
+          <div class="file-size" id="fileSize"></div>
+          <button class="btn btn-primary upload-btn" id="loadBtn">Load Project</button>
+        </div>
       </div>
       
       <div class="features">
@@ -398,8 +401,8 @@ function renderHome(): void {
           <p>Optimized JavaScript compilation with WebGL rendering for smooth performance.</p>
         </div>
         <div class="feature-card">
-          <h3>🔗 Direct Links</h3>
-          <p>Share projects easily with direct URLs. Just add the project ID to the URL.</p>
+          <h3>🔒 Private</h3>
+          <p>Files are processed locally in your browser. Nothing is uploaded to any server.</p>
         </div>
         <div class="feature-card">
           <h3>📱 Responsive</h3>
@@ -409,32 +412,80 @@ function renderHome(): void {
     </div>
   `;
 
-  const input = document.getElementById('projectInput') as HTMLInputElement;
-  input?.focus();
+  const dropZone = document.getElementById('dropZone')!;
+  const fileInput = document.getElementById('fileInput') as HTMLInputElement;
+  const fileSelected = document.getElementById('fileSelected')!;
+  const fileName = document.getElementById('fileName')!;
+  const fileSize = document.getElementById('fileSize')!;
+  const loadBtn = document.getElementById('loadBtn')!;
+
+  let selectedFile: File | null = null;
+
+  dropZone.addEventListener('click', () => fileInput.click());
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('drag-over');
+  });
+
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) {
+      handleFileSelect(files[0]);
+    }
+  });
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files && fileInput.files.length > 0) {
+      handleFileSelect(fileInput.files[0]);
+    }
+  });
+
+  function handleFileSelect(file: File): void {
+    if (!file.name.endsWith('.sb3')) {
+      renderError('Please select a valid .sb3 file');
+      return;
+    }
+    selectedFile = file;
+    fileName.textContent = file.name;
+    fileSize.textContent = formatFileSize(file.size);
+    fileSelected.classList.add('visible');
+  }
+
+  loadBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    await loadAndRenderProject(selectedFile);
+  });
 }
 
-function renderLoading(projectId: string): void {
+function renderLoading(): void {
   document.body.innerHTML = `
     <style>${globalCSS}</style>
     ${templates.loading}
   `;
-  setLoadingProgress(10, 'Connecting to Scratch...');
+  setLoadingProgress(10, 'Processing file...');
 }
 
-function renderPlayer(projectId: string): void {
+function renderPlayer(projectName: string): void {
   document.body.innerHTML = `
     <style>${globalCSS}</style>
     ${templates.player}
   `;
 
-  const projectIdDisplay = document.getElementById('projectIdDisplay');
+  const projectNameEl = document.getElementById('projectName');
   const projectTitle = document.getElementById('projectTitle');
   const playPauseBtn = document.getElementById('playPauseBtn');
   const fpsDisplay = document.getElementById('fpsDisplay');
   const projectStatus = document.getElementById('projectStatus');
 
-  if (projectIdDisplay) projectIdDisplay.textContent = projectId;
-  if (projectTitle) projectTitle.textContent = `Project #${projectId}`;
+  if (projectNameEl) projectNameEl.textContent = projectName;
+  if (projectTitle) projectTitle.textContent = projectName;
   
   let isPlaying = false;
 
@@ -471,8 +522,6 @@ function renderPlayer(projectId: string): void {
   });
 
   setLoadingProgress(20, 'Initializing player...');
-
-  loadProject(projectId, canvas);
 }
 
 function renderError(message: string): void {
@@ -483,9 +532,23 @@ function renderError(message: string): void {
   `;
 }
 
-async function loadProject(projectId: string, canvas: HTMLCanvasElement): Promise<void> {
+async function loadAndRenderProject(file: File): Promise<void> {
+  renderLoading();
+
   try {
-    setLoadingProgress(30, 'Fetching project data...');
+    setLoadingProgress(30, 'Loading project file...');
+
+    const sb3Project = await projectLoader.loadFromFile(file);
+
+    setLoadingProgress(60, 'Compiling scripts...');
+
+    renderPlayer(file.name);
+
+    const canvas = document.getElementById('scratchCanvas') as HTMLCanvasElement;
+
+    if (!canvas) {
+      throw new Error('Failed to initialize canvas');
+    }
 
     const instance = createZND({
       canvas,
@@ -497,16 +560,11 @@ async function loadProject(projectId: string, canvas: HTMLCanvasElement): Promis
 
     state.instance = instance;
 
-    setLoadingProgress(50, 'Compiling scripts...');
+    setLoadingProgress(80, 'Initializing runtime...');
     
-    await instance.loadProject(projectId);
+    await instance.loadProject(sb3Project);
 
     setLoadingProgress(90, 'Starting...');
-
-    const projectTitle = document.getElementById('projectTitle');
-    if (projectTitle) {
-      projectTitle.textContent = `Project #${projectId}`;
-    }
 
     const spriteCountEl = document.getElementById('spriteCount');
     const ctx = instance.engine.getContext();
@@ -526,58 +584,15 @@ async function loadProject(projectId: string, canvas: HTMLCanvasElement): Promis
       projectStatus.className = 'info-value status-running';
     }
 
-    document.title = `Project #${projectId} - ZND`;
+    document.title = `${file.name} - ZND`;
 
   } catch (err) {
     console.error('Failed to load project:', err);
-    renderError(err instanceof Error ? err.message : 'Failed to load project');
+    const message = err instanceof Error ? err.message : 'Failed to load project';
+    renderError(message);
   }
 }
-
-function handleSearch(): void {
-  const input = document.getElementById('projectInput') as HTMLInputElement;
-  const projectId = input?.value.trim();
-  
-  if (projectId && /^\d+$/.test(projectId)) {
-    window.history.pushState({}, '', `/${projectId}`);
-    loadAndRenderProject(projectId);
-  }
-}
-
-async function loadAndRenderProject(projectId: string): Promise<void> {
-  document.body.innerHTML = `
-    <style>${globalCSS}</style>
-    ${templates.player}
-  `;
-  
-  const canvas = document.getElementById('scratchCanvas') as HTMLCanvasElement;
-  if (!canvas) {
-    renderError('Failed to initialize canvas');
-    return;
-  }
-
-  setLoadingProgress(10, 'Connecting to Scratch...');
-  await loadProject(projectId, canvas);
-}
-
-(window as any).handleSearch = handleSearch;
-
-router.addRoute('^/?$', () => renderHome());
-router.addRoute('^/(\\d+)/?$', (params) => {
-  state.projectId = params[0];
-  loadAndRenderProject(params[0]);
-});
-router.addRoute('^/project/(\\d+)/?$', (params) => {
-  state.projectId = params[0];
-  loadAndRenderProject(params[0]);
-});
-
-window.addEventListener('popstate', () => {
-  router.navigate(window.location.pathname);
-});
 
 document.addEventListener('DOMContentLoaded', () => {
-  router.navigate(window.location.pathname);
+  renderHome();
 });
-
-(window as any).router = router;

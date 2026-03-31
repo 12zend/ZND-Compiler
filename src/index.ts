@@ -3,7 +3,7 @@ import { BlockParser } from './compiler/BlockParser';
 import { JSCodeGenerator } from './compiler/JSCodeGenerator';
 import { ExecutionEngine } from './core/ExecutionEngine';
 import { benchmark, Benchmark } from './utils/benchmark';
-import type { CompiledProgram } from './types/ir';
+import type { CompiledProgram, SB3Project } from './types';
 
 export interface ZNDConfig {
   canvas: HTMLCanvasElement;
@@ -18,8 +18,8 @@ export interface ZNDConfig {
 
 export interface ZNDInstance {
   engine: ExecutionEngine;
-  loadProject: (projectId: string) => Promise<void>;
-  loadProjectFromData: (data: any) => Promise<void>;
+  loadProject: (project: SB3Project) => Promise<void>;
+  loadProjectFromData: (data: SB3Project) => Promise<void>;
   start: () => void;
   stop: () => void;
   broadcast: (message: string, args?: any[]) => void;
@@ -30,7 +30,6 @@ export interface ZNDInstance {
 
 export class ZNDCompiler {
   private config: Required<ZNDConfig>;
-  private loader: ProjectLoader;
   private parser: BlockParser;
   private generator: JSCodeGenerator;
   private engine: ExecutionEngine;
@@ -53,21 +52,12 @@ export class ZNDCompiler {
     this.config.canvas.width = this.config.width;
     this.config.canvas.height = this.config.height;
 
-    this.loader = new ProjectLoader();
     this.parser = new BlockParser();
     this.generator = new JSCodeGenerator(this.parser);
     this.engine = new ExecutionEngine();
   }
 
-  async loadProject(projectId: string): Promise<void> {
-    benchmark.startMetric('project_load');
-    const project = await this.loader.fetch(projectId);
-    benchmark.endMetric('project_load');
-
-    if (this.config.debugMode) {
-      console.log('Project loaded:', project);
-    }
-
+  async loadProject(project: SB3Project): Promise<void> {
     benchmark.startMetric('project_parse');
     const parseResult = this.parser.parse(project.json);
     benchmark.endMetric('project_parse');
@@ -87,7 +77,14 @@ export class ZNDCompiler {
     if (!this.compiled) {
       throw new Error('Compilation failed');
     }
-    await this.engine.load(this.compiled, { costumes: new Map(), sounds: new Map(), vectors: new Map() });
+
+    const loadedAssets = {
+      costumes: new Map<string, HTMLImageElement | SVGElement>(),
+      sounds: new Map<string, AudioBuffer>(),
+      vectors: new Map<string, Path2D>()
+    };
+
+    await this.engine.load(this.compiled, loadedAssets);
 
     if (this.config.autoStart) {
       this.engine.start();
@@ -147,9 +144,9 @@ export function createZND(config: ZNDConfig): ZNDInstance {
 
   return {
     engine: compiler['engine'],
-    loadProject: (id) => compiler.loadProject(id),
+    loadProject: (project) => compiler.loadProject(project),
     loadProjectFromData: async (data) => {
-      await compiler.loadProject('temp');
+      await compiler.loadProject(data);
     },
     start: () => compiler.start(),
     stop: () => compiler.stop(),
