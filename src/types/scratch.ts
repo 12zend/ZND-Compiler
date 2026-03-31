@@ -4,6 +4,7 @@ export type FieldValue = { id?: string; name: string };
 export type InputValue = { name: string; id?: string } | PrimitiveValue;
 
 export interface ScratchBlock {
+  id: string;
   opcode: string;
   next: string | null;
   parent: string | null;

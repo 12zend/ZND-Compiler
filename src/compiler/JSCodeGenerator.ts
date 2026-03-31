@@ -194,13 +194,25 @@ export class JSCodeGenerator {
     return lines.join('\n' + this.indent());
   }
 
+  private getSubStack(input: IRValue | IRValue[] | undefined): IRBlock | null {
+    if (!input) return null;
+    if (Array.isArray(input) && input.length > 0) {
+      const first = input[0];
+      if (first && typeof first === 'object' && 'opcode' in first) {
+        return first as unknown as IRBlock;
+      }
+    }
+    return null;
+  }
+
   private generateRepeatBlock(block: IRBlock, ctx: GenerationContext): string {
     const times = this.evaluateInput(block.inputs.TIMES, ctx);
     const currentIndent = this.indent();
     this.indentLevel++;
 
-    const subCode = block.inputs.SUBSTACK?.[0] 
-      ? this.generateBlockCode(block.inputs.SUBSTACK[0] as IRBlock, ctx)
+    const subStackBlock = this.getSubStack(block.inputs.SUBSTACK);
+    const subCode = subStackBlock 
+      ? this.generateBlockCode(subStackBlock, ctx)
       : '';
 
     this.indentLevel--;
@@ -217,8 +229,9 @@ export class JSCodeGenerator {
     const currentIndent = this.indent();
     this.indentLevel++;
 
-    const subCode = block.inputs.SUBSTACK?.[0] 
-      ? this.generateBlockCode(block.inputs.SUBSTACK[0] as IRBlock, ctx)
+    const subStackBlock = this.getSubStack(block.inputs.SUBSTACK);
+    const subCode = subStackBlock 
+      ? this.generateBlockCode(subStackBlock, ctx)
       : '';
 
     this.indentLevel--;
@@ -235,8 +248,9 @@ export class JSCodeGenerator {
     const currentIndent = this.indent();
     this.indentLevel++;
 
-    const subCode = block.inputs.SUBSTACK?.[0] 
-      ? this.generateBlockCode(block.inputs.SUBSTACK[0] as IRBlock, ctx)
+    const subStackBlock = this.getSubStack(block.inputs.SUBSTACK);
+    const subCode = subStackBlock 
+      ? this.generateBlockCode(subStackBlock, ctx)
       : '';
 
     this.indentLevel--;
@@ -253,11 +267,13 @@ export class JSCodeGenerator {
     const currentIndent = this.indent();
     this.indentLevel++;
 
-    const thenCode = block.inputs.SUBSTACK?.[0] 
-      ? this.generateBlockCode(block.inputs.SUBSTACK[0] as IRBlock, ctx)
+    const thenBlock = this.getSubStack(block.inputs.SUBSTACK);
+    const elseBlock = this.getSubStack(block.inputs.SUBSTACK2);
+    const thenCode = thenBlock 
+      ? this.generateBlockCode(thenBlock, ctx)
       : '';
-    const elseCode = block.inputs.SUBSTACK2?.[0] 
-      ? this.generateBlockCode(block.inputs.SUBSTACK2[0] as IRBlock, ctx)
+    const elseCode = elseBlock 
+      ? this.generateBlockCode(elseBlock, ctx)
       : '';
 
     this.indentLevel--;

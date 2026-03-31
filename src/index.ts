@@ -2,7 +2,7 @@ import { ProjectLoader } from './loader/ProjectLoader';
 import { BlockParser } from './compiler/BlockParser';
 import { JSCodeGenerator } from './compiler/JSCodeGenerator';
 import { ExecutionEngine } from './core/ExecutionEngine';
-import { benchmark } from './utils/benchmark';
+import { benchmark, Benchmark } from './utils/benchmark';
 import type { CompiledProgram } from './types/ir';
 
 export interface ZNDConfig {

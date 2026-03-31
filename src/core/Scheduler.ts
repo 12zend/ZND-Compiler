@@ -118,8 +118,8 @@ export class Scheduler {
     if (!task.generator) {
       const result = task.handler();
       
-      if (result && typeof result.next === 'function') {
-        task.generator = result as Generator;
+      if (result && typeof result === 'object' && typeof (result as any).next === 'function') {
+        task.generator = result as unknown as Generator;
       } else {
         this.removeTask(task);
         return;
@@ -127,9 +127,10 @@ export class Scheduler {
     }
 
     const frameStart = performance.now();
+    let generator = task.generator;
     
     while (true) {
-      const { value, done } = task.generator.next();
+      const { value, done } = generator.next();
       
       if (done) {
         this.removeTask(task);
@@ -184,16 +185,16 @@ export class Scheduler {
   }
 }
 
-export const YIELD_TOKEN = Symbol('YIELD');
+export const YIELD_TOKEN = Symbol.for('YIELD');
 
-export function* yieldToScheduler(): Generator<symbol> {
-  return yield YIELD_TOKEN;
+export function* yieldToScheduler(): Generator<Symbol> {
+  yield YIELD_TOKEN;
 }
 
 export function* wait(duration: number): Generator<number> {
   const start = performance.now();
   while (performance.now() - start < duration * 1000) {
-    yield YIELD_TOKEN;
+    yield YIELD_TOKEN as unknown as number;
   }
 }
 
@@ -205,10 +206,10 @@ export function* loop(times: number, body: () => Generator | void): Generator<nu
         const { value, done } = (result as Generator).next();
         if (done) break;
         if (value === YIELD_TOKEN) {
-          yield YIELD_TOKEN;
+          yield YIELD_TOKEN as unknown as number;
         }
       }
     }
-    yield YIELD_TOKEN;
+    yield YIELD_TOKEN as unknown as number;
   }
 }

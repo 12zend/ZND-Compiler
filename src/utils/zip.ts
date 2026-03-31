@@ -1,9 +1,5 @@
 import pako from 'pako';
 
-declare module 'pako' {
-  export function inflate(data: Uint8Array): Uint8Array;
-}
-
 export async function unzip(buffer: ArrayBuffer): Promise<{ files: { name: string; content: ArrayBuffer | string }[] }> {
   try {
     const result: { files: { name: string; content: ArrayBuffer | string }[] } = { files: [] };

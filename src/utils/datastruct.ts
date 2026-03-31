@@ -52,11 +52,12 @@ export class ObjectPool<T> {
   }
 }
 
-export class FastMap<K, V> {
+export class FastMap<K, V> implements Map<K, V> {
   private map: Map<K, V> = new Map();
 
-  set(key: K, value: V): void {
+  set(key: K, value: V): this {
     this.map.set(key, value);
+    return this;
   }
 
   get(key: K): V | undefined {
@@ -71,7 +72,7 @@ export class FastMap<K, V> {
     return this.map.delete(key);
   }
 
-  forEach(callback: (value: V, key: K) => void): void {
+  forEach(callback: (value: V, key: K, map: Map<K, V>) => void): void {
     this.map.forEach(callback);
   }
 
@@ -81,6 +82,26 @@ export class FastMap<K, V> {
 
   entries(): IterableIterator<[K, V]> {
     return this.map.entries();
+  }
+
+  keys(): IterableIterator<K> {
+    return this.map.keys();
+  }
+
+  values(): IterableIterator<V> {
+    return this.map.values();
+  }
+
+  [Symbol.iterator](): IterableIterator<[K, V]> {
+    return this.map[Symbol.iterator]();
+  }
+
+  get [Symbol.toStringTag](): string {
+    return 'FastMap';
+  }
+
+  clear(): void {
+    this.map.clear();
   }
 }
 
@@ -113,7 +134,9 @@ export function memoize<T extends (...args: any[]) => any>(
       result = fn(...args);
       if (cache.size >= maxSize) {
         const firstKey = cache.keys().next().value;
-        cache.delete(firstKey);
+        if (firstKey !== undefined) {
+          cache.delete(firstKey);
+        }
       }
       cache.set(key, result);
     }
