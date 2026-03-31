@@ -545,24 +545,19 @@ function handleSearch(): void {
 }
 
 async function loadAndRenderProject(projectId: string): Promise<void> {
-  renderLoading(projectId);
+  document.body.innerHTML = `
+    <style>${globalCSS}</style>
+    ${templates.player}
+  `;
   
-  let canvas: HTMLCanvasElement | null = null;
-  let resolved = false;
+  const canvas = document.getElementById('scratchCanvas') as HTMLCanvasElement;
+  if (!canvas) {
+    renderError('Failed to initialize canvas');
+    return;
+  }
 
-  const resolveWhenReady = (): void => {
-    if (resolved) return;
-    resolved = true;
-    canvas = document.getElementById('scratchCanvas') as HTMLCanvasElement;
-    if (!canvas) {
-      renderError('Failed to initialize canvas');
-      return;
-    }
-    loadProject(projectId, canvas);
-  };
-
-  setTimeout(() => resolveWhenReady(), 100);
-  requestAnimationFrame(() => resolveWhenReady());
+  setLoadingProgress(10, 'Connecting to Scratch...');
+  await loadProject(projectId, canvas);
 }
 
 (window as any).handleSearch = handleSearch;

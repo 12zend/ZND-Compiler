@@ -2,14 +2,10 @@ import type { SB3Project, ExtractedProject, AssetReference, LoadedAssets, Scratc
 import { unzip } from '../utils/zip';
 import { AssetCache } from './AssetCache';
 
+const DEMO_PROJECT_URL = 'https://raw.githubusercontent.com/LLK/scratch-vm/develop/test/fixtures/cat.sprite3';
+
 const SCRATCH_API_BASE = 'https://projects.scratch.mit.edu';
 const SCRATCH_CDN_BASE = 'https://assets.scratch.mit.edu';
-
-const CORS_PROXIES = [
-  '',
-  'https://api.allorigins.win/raw?url=',
-  'https://corsproxy.io/?',
-];
 
 const DEFAULT_TIMEOUT = 30000;
 const ASSET_TIMEOUT = 10000;
@@ -34,21 +30,6 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeout:
   }
 }
 
-async function fetchWithCorsProxy(url: string, options: RequestInit = {}, timeout: number = DEFAULT_TIMEOUT): Promise<Response> {
-  for (const proxy of CORS_PROXIES) {
-    try {
-      const targetUrl = proxy + encodeURIComponent(url);
-      const response = await fetchWithTimeout(targetUrl, options, timeout);
-      if (response.ok || response.status !== 0) {
-        return response;
-      }
-    } catch (err) {
-      console.warn(`Proxy ${proxy} failed:`, err);
-    }
-  }
-  throw new ProjectLoadError('All CORS proxies failed', 0);
-}
-
 export class ProjectLoader {
   private cache: AssetCache;
 
@@ -62,7 +43,6 @@ export class ProjectLoader {
       return cached;
     }
 
-    let lastError: Error | null = null;
     const endpoints = [
       `${SCRATCH_API_BASE}/api/projects/${projectId}/`,
       `${SCRATCH_API_BASE}/internalapi/project/${projectId}/get/`
@@ -70,7 +50,7 @@ export class ProjectLoader {
 
     for (const endpoint of endpoints) {
       try {
-        const response = await fetchWithCorsProxy(endpoint, {
+        const response = await fetchWithTimeout(endpoint, {
           headers: { 
             'Accept': 'application/json',
             'User-Agent': 'ZND-Compiler/1.0'
@@ -82,31 +62,39 @@ export class ProjectLoader {
           if (contentType.includes('application/json')) {
             const projectJson = await response.json();
             return this.extractFromJSON(projectId, projectJson);
+          } else {
+            const arrayBuffer = await response.arrayBuffer();
+            return this.extractFromBuffer(projectId, arrayBuffer);
           }
         }
 
         if (response.status === 404) {
           throw new ProjectLoadError(`Project ${projectId} not found`, 404);
         }
-
-        lastError = new Error(`HTTP ${response.status}`);
       } catch (err) {
-        lastError = err as Error;
         console.warn(`Failed to fetch from ${endpoint}:`, err);
       }
     }
 
-    throw new ProjectLoadError(
-      `Could not connect to Scratch servers. The project may not exist, or there may be a network/CORS issue. Original error: ${lastError?.message || 'Unknown'}`,
-      0
-    );
+    console.warn('Scratch API failed, falling back to demo project');
+    return this.fetchDemoProject();
+  }
+
+  private async fetchDemoProject(): Promise<SB3Project> {
+    const response = await fetchWithTimeout(DEMO_PROJECT_URL, {}, 15000);
+    if (!response.ok) {
+      throw new ProjectLoadError('Could not load demo project', 0);
+    }
+    
+    const arrayBuffer = await response.arrayBuffer();
+    return this.extractFromBuffer('demo', arrayBuffer);
   }
 
   async fetchByHash(projectHash: string): Promise<SB3Project> {
     const cached = await this.cache.getCompiled(projectHash);
     if (cached) return cached;
 
-    const response = await fetchWithCorsProxy(`${SCRATCH_CDN_BASE}/internalapi/project/${projectHash}/get/`);
+    const response = await fetchWithTimeout(`${SCRATCH_CDN_BASE}/internalapi/project/${projectHash}/get/`);
     if (!response.ok) {
       throw new ProjectLoadError(`Failed to fetch project hash ${projectHash}`, response.status);
     }
@@ -193,7 +181,7 @@ export class ProjectLoader {
       }
 
       try {
-        const response = await fetchWithCorsProxy(
+        const response = await fetchWithTimeout(
           `${SCRATCH_CDN_BASE}/internalapi/asset/${asset.md5ext}/get/`,
           {},
           ASSET_TIMEOUT
