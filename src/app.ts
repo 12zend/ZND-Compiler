@@ -540,8 +540,29 @@ function handleSearch(): void {
   
   if (projectId && /^\d+$/.test(projectId)) {
     window.history.pushState({}, '', `/${projectId}`);
-    router.navigate(`/${projectId}`);
+    loadAndRenderProject(projectId);
   }
+}
+
+async function loadAndRenderProject(projectId: string): Promise<void> {
+  renderLoading(projectId);
+  
+  let canvas: HTMLCanvasElement | null = null;
+  let resolved = false;
+
+  const resolveWhenReady = (): void => {
+    if (resolved) return;
+    resolved = true;
+    canvas = document.getElementById('scratchCanvas') as HTMLCanvasElement;
+    if (!canvas) {
+      renderError('Failed to initialize canvas');
+      return;
+    }
+    loadProject(projectId, canvas);
+  };
+
+  setTimeout(() => resolveWhenReady(), 100);
+  requestAnimationFrame(() => resolveWhenReady());
 }
 
 (window as any).handleSearch = handleSearch;
@@ -549,16 +570,11 @@ function handleSearch(): void {
 router.addRoute('^/?$', () => renderHome());
 router.addRoute('^/(\\d+)/?$', (params) => {
   state.projectId = params[0];
-  renderLoading(params[0]);
-  const canvas = document.getElementById('scratchCanvas');
-  if (canvas) {
-    renderPlayer(params[0]);
-  }
+  loadAndRenderProject(params[0]);
 });
 router.addRoute('^/project/(\\d+)/?$', (params) => {
   state.projectId = params[0];
-  renderLoading(params[0]);
-  renderPlayer(params[0]);
+  loadAndRenderProject(params[0]);
 });
 
 window.addEventListener('popstate', () => {

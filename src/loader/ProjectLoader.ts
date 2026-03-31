@@ -5,6 +5,29 @@ import { AssetCache } from './AssetCache';
 const SCRATCH_API_BASE = 'https://projects.scratch.mit.edu';
 const SCRATCH_CDN_BASE = 'https://assets.scratch.mit.edu';
 
+const DEFAULT_TIMEOUT = 30000;
+const ASSET_TIMEOUT = 10000;
+
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeout: number = DEFAULT_TIMEOUT): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new ProjectLoadError(`Request timeout for ${url}`, 408);
+    }
+    throw err;
+  }
+}
+
 export class ProjectLoader {
   private cache: AssetCache;
 
@@ -18,11 +41,14 @@ export class ProjectLoader {
       return cached;
     }
 
-    const response = await fetch(`${SCRATCH_API_BASE}/api/projects/${projectId}/`, {
+    const response = await fetchWithTimeout(`${SCRATCH_API_BASE}/api/projects/${projectId}/`, {
       headers: { 'Accept': 'application/json' }
     });
 
     if (!response.ok) {
+      if (response.status === 404) {
+        throw new ProjectLoadError(`Project ${projectId} not found`, 404);
+      }
       throw new ProjectLoadError(`Failed to fetch project ${projectId}`, response.status);
     }
 
@@ -34,7 +60,7 @@ export class ProjectLoader {
     const cached = await this.cache.getCompiled(projectHash);
     if (cached) return cached;
 
-    const response = await fetch(`${SCRATCH_CDN_BASE}/internalapi/project/${projectHash}/get/`);
+    const response = await fetchWithTimeout(`${SCRATCH_CDN_BASE}/internalapi/project/${projectHash}/get/`);
     if (!response.ok) {
       throw new ProjectLoadError(`Failed to fetch project hash ${projectHash}`, response.status);
     }
@@ -120,11 +146,19 @@ export class ProjectLoader {
         return;
       }
 
-      const response = await fetch(`${SCRATCH_CDN_BASE}/internalapi/asset/${asset.md5ext}/get/`);
-      if (response.ok) {
-        const buffer = await response.arrayBuffer();
-        project.assets.set(asset.md5ext, buffer);
-        await this.cache.setAsset(asset.md5ext, buffer);
+      try {
+        const response = await fetchWithTimeout(
+          `${SCRATCH_CDN_BASE}/internalapi/asset/${asset.md5ext}/get/`,
+          {},
+          ASSET_TIMEOUT
+        );
+        if (response.ok) {
+          const buffer = await response.arrayBuffer();
+          project.assets.set(asset.md5ext, buffer);
+          await this.cache.setAsset(asset.md5ext, buffer);
+        }
+      } catch (err) {
+        console.warn(`Failed to load asset ${asset.md5ext}:`, err);
       }
     };
 
