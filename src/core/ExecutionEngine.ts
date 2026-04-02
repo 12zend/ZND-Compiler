@@ -334,6 +334,9 @@ export class ExecutionEngine {
 
   private spritePool: ObjectPool<SpriteInstance>;
   private assetPool: ObjectPool<any>;
+  
+  private mouseX: number = 0;
+  private mouseY: number = 0;
 
   constructor() {
     this.spritePool = new ObjectPool<SpriteInstance>(
@@ -375,6 +378,16 @@ export class ExecutionEngine {
     const lists = new Map<string, PrimitiveValue[]>();
     const sprites = new Map<string, SpriteInstance>();
 
+    // Set up mouse listeners
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      // Convert to Scratch coordinates (-240 to 240, -180 to 180)
+      this.mouseX = (x / rect.width) * 480 - 240;
+      this.mouseY = 180 - (y / rect.height) * 360;
+    });
+
     for (const [id, variable] of program.ir.globalVariables) {
       variables.set(id, variable.value);
     }
@@ -412,11 +425,6 @@ export class ExecutionEngine {
       instance.costumeIndex = clampIndex(sprite.defaultCostumeIndex, Math.max(runtimeCostumes.length, 1));
 
       sprites.set(sprite.id, instance);
-      console.log('[ZND] sprite initialization complete', {
-        spriteId: sprite.id,
-        costumeCount: runtimeCostumes.length,
-        isStage: sprite.isStage
-      });
     }
 
     this.context = {
@@ -429,6 +437,27 @@ export class ExecutionEngine {
       scheduler,
       stopFlags: new Set()
     };
+
+    // Set up broadcast subscriptions
+    for (const sprite of program.ir.orderedSprites) {
+      for (const script of sprite.scripts) {
+        if (script.hatOpcode === 'event_whenbroadcastreceived') {
+          const broadcastMsg = String(script.topBlock.fields.BROADCAST_OPTION?.value || '');
+          broadcasts.subscribe(broadcastMsg, () => {
+            // Scratch restarts the script if it's already running
+            scheduler.cancel('script', script.targetId, script.id);
+            scheduler.schedule(
+              'script',
+              script.targetId,
+              script.id,
+              () => this.runScript(script),
+              'normal'
+            );
+          });
+        }
+      }
+    }
+
     console.log('[ZND] engine load complete', {
       spriteCount: sprites.size,
       globalVariableCount: variables.size,
@@ -491,16 +520,9 @@ export class ExecutionEngine {
       }
 
       this.context.renderer.renderSprite(sprite);
-      console.log('[ZND] sprite render complete', {
-        spriteId: sprite.id,
-        x: sprite.x,
-        y: sprite.y,
-        costume: sprite.costumeName
-      });
 
       if (sprite.isStage) {
         this.context.renderer.renderPenLayer();
-        console.log('[ZND] pen layer render complete');
       }
     }
 
@@ -521,13 +543,26 @@ export class ExecutionEngine {
     return this.context.sprites.get(nameOrId);
   }
 
-  setVariable(nameOrId: string, value: PrimitiveValue): void {
+  setVariable(nameOrId: string, value: PrimitiveValue, spriteId?: string): void {
     if (!this.context) return;
+    if (spriteId) {
+      const sprite = this.context.sprites.get(spriteId);
+      if (sprite && sprite.variables.has(nameOrId)) {
+        sprite.variables.set(nameOrId, value);
+        return;
+      }
+    }
     this.context.variables.set(nameOrId, value);
   }
 
-  getVariable(nameOrId: string): PrimitiveValue {
+  getVariable(nameOrId: string, spriteId?: string): PrimitiveValue {
     if (!this.context) return null;
+    if (spriteId) {
+      const sprite = this.context.sprites.get(spriteId);
+      if (sprite && sprite.variables.has(nameOrId)) {
+        return sprite.variables.get(nameOrId) ?? null;
+      }
+    }
     return this.context.variables.get(nameOrId) ?? null;
   }
 
@@ -591,16 +626,7 @@ export class ExecutionEngine {
       return;
     }
 
-    console.log('[ZND] script execution start', {
-      targetId: script.targetId,
-      scriptId: script.id,
-      hatOpcode: script.hatOpcode
-    });
     yield* this.runBlockChain(sprite, script.topBlock.next);
-    console.log('[ZND] script execution complete', {
-      targetId: script.targetId,
-      scriptId: script.id
-    });
   }
 
   private *runBlockChain(sprite: SpriteInstance, startBlock: IRBlock | null): Generator<symbol | number | void> {
@@ -609,55 +635,93 @@ export class ExecutionEngine {
     while (current && this.running) {
       switch (current.opcode) {
         case 'motion_movesteps':
-          sprite.move(this.getNumericInput(current.inputs.STEPS));
+          sprite.move(this.getNumericInput(current.inputs.STEPS, sprite));
           break;
         case 'motion_gotoxy':
           sprite.gotoXY(
-            this.getNumericInput(current.inputs.X),
-            this.getNumericInput(current.inputs.Y)
+            this.getNumericInput(current.inputs.X, sprite),
+            this.getNumericInput(current.inputs.Y, sprite)
           );
           break;
         case 'motion_setx':
-          sprite.x = this.getNumericInput(current.inputs.X);
+          sprite.x = this.getNumericInput(current.inputs.X, sprite);
           break;
         case 'motion_sety':
-          sprite.y = this.getNumericInput(current.inputs.Y);
+          sprite.y = this.getNumericInput(current.inputs.Y, sprite);
           break;
         case 'motion_changexby':
-          sprite.x += this.getNumericInput(current.inputs.DX);
+          sprite.x += this.getNumericInput(current.inputs.DX, sprite);
           break;
         case 'motion_changeyby':
-          sprite.y += this.getNumericInput(current.inputs.DY);
+          sprite.y += this.getNumericInput(current.inputs.DY, sprite);
           break;
         case 'motion_pointindirection':
-          sprite.direction = this.getNumericInput(current.inputs.DIRECTION);
+          sprite.direction = this.getNumericInput(current.inputs.DIRECTION, sprite);
           break;
         case 'motion_pointtowards':
-          this.pointSpriteTowards(sprite, this.getStringInput(current.inputs.TOWARDS));
+          this.pointSpriteTowards(sprite, this.getStringInput(current.inputs.TOWARDS, sprite));
           break;
         case 'motion_turnright':
-          sprite.direction += this.getNumericInput(current.inputs.DEGREES);
+          sprite.direction += this.getNumericInput(current.inputs.DEGREES, sprite);
           break;
         case 'motion_turnleft':
-          sprite.direction -= this.getNumericInput(current.inputs.DEGREES);
+          sprite.direction -= this.getNumericInput(current.inputs.DEGREES, sprite);
           break;
         case 'motion_ifonedgebounce':
           sprite.ifOnEdgeBounce();
           break;
         case 'motion_goto':
-          this.moveSpriteToTarget(sprite, this.getStringInput(current.inputs.TO));
+          this.moveSpriteToTarget(sprite, this.getStringInput(current.inputs.TO, sprite));
           break;
-        case 'motion_glidesecstoxy':
-          yield* wait(this.getNumericInput(current.inputs.SECS));
-          sprite.gotoXY(
-            this.getNumericInput(current.inputs.X),
-            this.getNumericInput(current.inputs.Y)
-          );
+        case 'motion_glidesecstoxy': {
+          const secs = this.getNumericInput(current.inputs.SECS, sprite);
+          const startX = sprite.x;
+          const startY = sprite.y;
+          const targetX = this.getNumericInput(current.inputs.X, sprite);
+          const targetY = this.getNumericInput(current.inputs.Y, sprite);
+          const startTime = performance.now();
+          const duration = secs * 1000;
+          
+          if (duration <= 0) {
+            sprite.gotoXY(targetX, targetY);
+          } else {
+            while (performance.now() - startTime < duration) {
+              const t = (performance.now() - startTime) / duration;
+              sprite.gotoXY(
+                startX + (targetX - startX) * t,
+                startY + (targetY - startY) * t
+              );
+              yield YIELD_TOKEN;
+            }
+            sprite.gotoXY(targetX, targetY);
+          }
           break;
-        case 'motion_glideto':
-          yield* wait(this.getNumericInput(current.inputs.SECS));
-          this.moveSpriteToTarget(sprite, this.getStringInput(current.inputs.TO));
+        }
+        case 'motion_glideto': {
+          const secs = this.getNumericInput(current.inputs.SECS, sprite);
+          const startX = sprite.x;
+          const startY = sprite.y;
+          const targetName = this.getStringInput(current.inputs.TO, sprite);
+          const startTime = performance.now();
+          const duration = secs * 1000;
+          
+          if (duration <= 0) {
+            this.moveSpriteToTarget(sprite, targetName);
+          } else {
+            while (performance.now() - startTime < duration) {
+              const targetXY = this.getTargetXY(targetName);
+              if (!targetXY) break;
+              const t = (performance.now() - startTime) / duration;
+              sprite.gotoXY(
+                startX + (targetXY[0] - startX) * t,
+                startY + (targetXY[1] - startY) * t
+              );
+              yield YIELD_TOKEN;
+            }
+            this.moveSpriteToTarget(sprite, targetName);
+          }
           break;
+        }
         case 'motion_setrotationstyle': {
           const style = typeof current.fields.STYLE === 'string' ? current.fields.STYLE : 'all-around';
           sprite.rotationStyle = style as SpriteInstance['rotationStyle'];
@@ -670,16 +734,67 @@ export class ExecutionEngine {
           sprite.visible = false;
           break;
         case 'looks_switchcostumeto':
-          sprite.setCostume(this.getCostumeSelector(current.inputs.COSTUME));
+          sprite.setCostume(this.getCostumeSelector(current.inputs.COSTUME, sprite));
           break;
         case 'looks_nextcostume':
           sprite.nextCostume();
           break;
-        case 'control_wait':
-          yield* wait(this.getNumericInput(current.inputs.DURATION));
+        case 'looks_changesizeby':
+          sprite.size += this.getNumericInput(current.inputs.CHANGE, sprite);
           break;
+        case 'looks_setsizeto':
+          sprite.size = this.getNumericInput(current.inputs.SIZE, sprite);
+          break;
+        case 'looks_changeeffectby':
+          sprite.changeEffect(String(current.fields.EFFECT?.value || 'ghost'), this.getNumericInput(current.inputs.CHANGE, sprite));
+          break;
+        case 'looks_seteffectto':
+          sprite.setEffect(String(current.fields.EFFECT?.value || 'ghost'), this.getNumericInput(current.inputs.VALUE, sprite));
+          break;
+        case 'looks_cleargraphiceffects':
+          sprite.clearEffects();
+          break;
+        case 'looks_gotofrontback':
+          sprite.goToLayer(String(current.fields.FRONT_BACK?.value || 'front'));
+          break;
+        case 'looks_gobackfront':
+          // Simplified: just go back/front by a large amount
+          if (current.fields.FORWARD_BACKWARD?.value === 'backward') {
+            sprite.layerOrder -= this.getNumericInput(current.inputs.NUM, sprite);
+          } else {
+            sprite.layerOrder += this.getNumericInput(current.inputs.NUM, sprite);
+          }
+          break;
+        case 'control_wait':
+          yield* wait(this.getNumericInput(current.inputs.DURATION, sprite));
+          break;
+        case 'control_if': {
+          const condition = Boolean(this.evaluateValue(current.inputs.CONDITION, sprite));
+          if (condition) {
+            const substack = this.getSubstack(current.inputs.SUBSTACK);
+            if (substack) {
+              yield* this.runBlockChain(sprite, substack);
+            }
+          }
+          break;
+        }
+        case 'control_if_else': {
+          const condition = Boolean(this.evaluateValue(current.inputs.CONDITION, sprite));
+          if (condition) {
+            const substack = this.getSubstack(current.inputs.SUBSTACK);
+            if (substack) {
+              yield* this.runBlockChain(sprite, substack);
+            }
+          } else {
+            const substack2 = this.getSubstack(current.inputs.SUBSTACK2);
+            if (substack2) {
+              yield* this.runBlockChain(sprite, substack2);
+            }
+          }
+          break;
+        }
         case 'control_repeat': {
-          const times = Math.max(0, Math.floor(this.getNumericInput(current.inputs.TIMES)));
+          const times = Math.max(0, Math.floor(this.getNumericInput(current.inputs.TIMES, sprite)));
           const substack = this.getSubstack(current.inputs.SUBSTACK);
           for (let i = 0; i < times && this.running; i++) {
             if (substack) {
@@ -699,6 +814,36 @@ export class ExecutionEngine {
           }
           return;
         }
+        case 'control_stop': {
+          const mode = String(current.fields.STOP_OPTION?.value || 'all');
+          if (mode === 'all') {
+            this.stop();
+          } else if (mode === 'this script') {
+            return;
+          } else if (mode === 'other scripts in sprite') {
+            // Simplified: cancel all other scripts for this sprite
+            this.context.scheduler.cancel('script', sprite.id);
+            // Note: This won't cancel the current script because it's currently executing 
+            // and not in the priority queues of the scheduler during its own execution.
+          }
+          break;
+        }
+        case 'event_broadcast':
+          this.context.broadcasts.send(this.getStringInput(current.inputs.BROADCAST_INPUT, sprite));
+          break;
+        case 'event_broadcastandwait':
+          yield this.context.broadcasts.sendAndWait(this.getStringInput(current.inputs.BROADCAST_INPUT, sprite));
+          break;
+        case 'data_setvariableto':
+          this.setVariable(current.fields.VARIABLE?.id || current.fields.VARIABLE?.name, this.evaluateValue(current.inputs.VALUE, sprite), sprite.id);
+          break;
+        case 'data_changevariableby': {
+          const varId = current.fields.VARIABLE?.id || current.fields.VARIABLE?.name;
+          const currentVal = Number(this.getVariable(varId, sprite.id)) || 0;
+          const delta = Number(this.evaluateValue(current.inputs.VALUE, sprite)) || 0;
+          this.setVariable(varId, currentVal + delta, sprite.id);
+          break;
+        }
         case 'pen_penup':
         case 'pen_penUp':
           sprite.penUp();
@@ -714,33 +859,156 @@ export class ExecutionEngine {
           sprite.stamp();
           break;
         case 'pen_setpencolortocolor':
-        case 'pen_setPenColorToColor':
-          if (typeof current.fields.COLOR === 'string') {
+        case 'pen_setPenColorToColor': {
+          const colorInput = current.inputs.COLOR;
+          if (colorInput) {
+            sprite.setPenColor(String(this.evaluateValue(colorInput, sprite)));
+          } else if (typeof current.fields.COLOR === 'string') {
             sprite.setPenColor(current.fields.COLOR);
           }
           break;
+        }
         case 'pen_changepensizeby':
         case 'pen_changePenSizeBy':
-          sprite.changePenSize(this.getNumericInput(current.inputs.SIZE));
+          sprite.changePenSize(this.getNumericInput(current.inputs.SIZE, sprite));
           break;
         case 'pen_setpensizeto':
         case 'pen_setPenSizeTo':
-          sprite.setPenSize(this.getNumericInput(current.inputs.SIZE));
+          sprite.setPenSize(this.getNumericInput(current.inputs.SIZE, sprite));
           break;
       }
 
-      console.log('[ZND] block execution complete', {
-        spriteId: sprite.id,
-        opcode: current.opcode,
-        x: sprite.x,
-        y: sprite.y,
-        direction: sprite.direction,
-        visible: sprite.visible,
-        costume: sprite.costumeName
-      });
-
       current = current.next;
     }
+  }
+
+  private evaluateValue(input: IRValue | IRValue[] | undefined, sprite: SpriteInstance): PrimitiveValue {
+    if (!input) return 0;
+
+    if (Array.isArray(input)) {
+      for (const item of input) {
+        if (item.type === 'block' && item.resolvedBlock) {
+          return this.evaluateReporter(item.resolvedBlock, sprite);
+        }
+      }
+      for (const item of input) {
+        if (item.type === 'literal') return item.value;
+      }
+      return 0;
+    }
+
+    if (input.type === 'block' && input.resolvedBlock) {
+      return this.evaluateReporter(input.resolvedBlock, sprite);
+    }
+
+    if (input.type === 'variable') {
+      return this.getVariable(String(input.value), sprite.id);
+    }
+
+    return input.value;
+  }
+
+  private evaluateReporter(block: IRBlock, sprite: SpriteInstance): PrimitiveValue {
+    switch (block.opcode) {
+      case 'operator_add':
+        return Number(this.evaluateValue(block.inputs.NUM1, sprite)) + Number(this.evaluateValue(block.inputs.NUM2, sprite));
+      case 'operator_subtract':
+        return Number(this.evaluateValue(block.inputs.NUM1, sprite)) - Number(this.evaluateValue(block.inputs.NUM2, sprite));
+      case 'operator_multiply':
+        return Number(this.evaluateValue(block.inputs.NUM1, sprite)) * Number(this.evaluateValue(block.inputs.NUM2, sprite));
+      case 'operator_divide':
+        return Number(this.evaluateValue(block.inputs.NUM1, sprite)) / Number(this.evaluateValue(block.inputs.NUM2, sprite));
+      case 'operator_random': {
+        const from = Number(this.evaluateValue(block.inputs.FROM, sprite));
+        const to = Number(this.evaluateValue(block.inputs.TO, sprite));
+        const low = Math.min(from, to);
+        const high = Math.max(from, to);
+        if (Math.floor(low) === low && Math.floor(high) === high) {
+          return Math.floor(Math.random() * (high - low + 1)) + low;
+        }
+        return Math.random() * (high - low) + low;
+      }
+      case 'operator_lt':
+        return this.compare(this.evaluateValue(block.inputs.OPERAND1, sprite), this.evaluateValue(block.inputs.OPERAND2, sprite)) < 0;
+      case 'operator_equals':
+        return this.compare(this.evaluateValue(block.inputs.OPERAND1, sprite), this.evaluateValue(block.inputs.OPERAND2, sprite)) === 0;
+      case 'operator_gt':
+        return this.compare(this.evaluateValue(block.inputs.OPERAND1, sprite), this.evaluateValue(block.inputs.OPERAND2, sprite)) > 0;
+      case 'operator_and':
+        return Boolean(this.evaluateValue(block.inputs.OPERAND1, sprite)) && Boolean(this.evaluateValue(block.inputs.OPERAND2, sprite));
+      case 'operator_or':
+        return Boolean(this.evaluateValue(block.inputs.OPERAND1, sprite)) || Boolean(this.evaluateValue(block.inputs.OPERAND2, sprite));
+      case 'operator_not':
+        return !Boolean(this.evaluateValue(block.inputs.OPERAND, sprite));
+      case 'operator_join':
+        return String(this.evaluateValue(block.inputs.STRING1, sprite)) + String(this.evaluateValue(block.inputs.STRING2, sprite));
+      case 'motion_xposition':
+        return sprite.x;
+      case 'motion_yposition':
+        return sprite.y;
+      case 'motion_direction':
+        return sprite.direction;
+      case 'looks_size':
+        return sprite.size;
+      case 'looks_costumenumbername':
+        return block.fields.NUMBER_NAME?.value === 'name' ? sprite.costumeName : sprite.costumeIndex + 1;
+      case 'sensing_mousex':
+        return this.mouseX;
+      case 'sensing_mousey':
+        return this.mouseY;
+      case 'sensing_touchingobject': {
+        const targetName = this.getStringInput(block.inputs.TOUCHINGOBJECTMENU, sprite);
+        const targetXY = this.getTargetXY(targetName);
+        if (!targetXY) return false;
+        
+        // Simple distance-based collision check
+        const dx = targetXY[0] - sprite.x;
+        const dy = targetXY[1] - sprite.y;
+        const distSq = dx * dx + dy * dy;
+        
+        const c1 = sprite.getCurrentCostume();
+        const r1 = c1 ? (Math.max(c1.width, c1.height) / (2 * (c1.bitmapResolution || 1))) * (sprite.size / 100) : 10;
+        
+        let r2 = 10;
+        if (targetName === '_mouse_') {
+          r2 = 1;
+        } else {
+          const target = this.getSprite(targetName);
+          if (target) {
+            const c2 = target.getCurrentCostume();
+            r2 = c2 ? (Math.max(c2.width, c2.height) / (2 * (c2.bitmapResolution || 1))) * (target.size / 100) : 10;
+          }
+        }
+        
+        return distSq < (r1 + r2) * (r1 + r2);
+      }
+      case 'sensing_distanceto': {
+        const targetName = this.getStringInput(block.inputs.DISTANCETOMENU, sprite);
+        const targetXY = this.getTargetXY(targetName);
+        if (!targetXY) return 10000;
+        const dx = targetXY[0] - sprite.x;
+        const dy = targetXY[1] - sprite.y;
+        return Math.sqrt(dx * dx + dy * dy);
+      }
+      case 'data_variable':
+        return this.getVariable(block.fields.VARIABLE?.id || block.fields.VARIABLE?.name, sprite.id);
+      default:
+        console.warn(`[ZND] unknown reporter opcode: ${block.opcode}`);
+        return 0;
+    }
+  }
+
+  private compare(v1: any, v2: any): number {
+    const n1 = Number(v1);
+    const n2 = Number(v2);
+    if (!isNaN(n1) && !isNaN(n2)) {
+      return n1 - n2;
+    }
+    const s1 = String(v1).toLocaleLowerCase();
+    const s2 = String(v2).toLocaleLowerCase();
+    if (s1 < s2) return -1;
+    if (s1 > s2) return 1;
+    return 0;
   }
 
   private getSubstack(input: IRValue | IRValue[] | undefined): IRBlock | null {
@@ -760,36 +1028,19 @@ export class ExecutionEngine {
     return input.resolvedBlock ?? null;
   }
 
-  private getInputValue(input: IRValue | IRValue[] | undefined): PrimitiveValue | string {
-    if (!input) {
-      return 0;
-    }
-
-    if (Array.isArray(input)) {
-      for (const item of input) {
-        if (item.type === 'literal') {
-          return item.value;
-        }
-      }
-      return 0;
-    }
-
-    return input.value;
-  }
-
-  private getNumericInput(input: IRValue | IRValue[] | undefined): number {
-    const value = this.getInputValue(input);
+  private getNumericInput(input: IRValue | IRValue[] | undefined, sprite: SpriteInstance): number {
+    const value = this.evaluateValue(input, sprite);
     const numeric = typeof value === 'number' ? value : Number(value);
     return Number.isFinite(numeric) ? numeric : 0;
   }
 
-  private getStringInput(input: IRValue | IRValue[] | undefined): string {
-    const value = this.getInputValue(input);
+  private getStringInput(input: IRValue | IRValue[] | undefined, sprite: SpriteInstance): string {
+    const value = this.evaluateValue(input, sprite);
     return typeof value === 'string' ? value : String(value ?? '');
   }
 
-  private getCostumeSelector(input: IRValue | IRValue[] | undefined): number | string {
-    const value = this.getInputValue(input);
+  private getCostumeSelector(input: IRValue | IRValue[] | undefined, sprite: SpriteInstance): number | string {
+    const value = this.evaluateValue(input, sprite);
     if (typeof value === 'number' || typeof value === 'string') {
       return value;
     }
@@ -805,11 +1056,6 @@ export class ExecutionEngine {
   }
 
   private pointSpriteTowards(sprite: SpriteInstance, targetName: string): void {
-    if (targetName === '_random_') {
-      sprite.direction = Math.round(Math.random() * 360) - 180;
-      return;
-    }
-
     const targetXY = this.getTargetXY(targetName);
     if (!targetXY) {
       return;
@@ -833,11 +1079,15 @@ export class ExecutionEngine {
     }
 
     if (targetName === '_mouse_') {
-      return [0, 0];
+      return [this.mouseX, this.mouseY];
     }
 
     const targetSprite = this.context.sprites.get(targetName);
     if (!targetSprite) {
+      // Try to find by name
+      for (const s of this.context.sprites.values()) {
+        if (s.name === targetName) return [s.x, s.y];
+      }
       return null;
     }
 

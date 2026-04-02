@@ -15,12 +15,11 @@ export interface Task {
   resolved: boolean;
 }
 
-const FRAME_BUDGET_MS = 16;
+const FRAME_BUDGET_MS = 33; // Target 30FPS (approx 33ms per frame)
 const YIELD_INTERVAL = 100;
 
 export class Scheduler {
   private tasks: Map<string, Task> = new Map();
-  private taskQueue: Task[] = [];
   private frameTime: number = 0;
   private frameCount: number = 0;
   private taskCounter: number = 0;
@@ -28,6 +27,9 @@ export class Scheduler {
   private highPriorityQueue: Task[] = [];
   private normalPriorityQueue: Task[] = [];
   private lowPriorityQueue: Task[] = [];
+  
+  // Tasks that yielded this frame and should wait for the next frame
+  private nextFrameQueue: Task[] = [];
 
   schedule(
     type: string,
@@ -60,7 +62,12 @@ export class Scheduler {
     return task;
   }
 
-  private addToQueue(task: Task): void {
+  private addToQueue(task: Task, forNextFrame: boolean = false): void {
+    if (forNextFrame) {
+      this.nextFrameQueue.push(task);
+      return;
+    }
+
     switch (task.priority) {
       case 'high':
         this.highPriorityQueue.push(task);
@@ -78,22 +85,37 @@ export class Scheduler {
     this.frameTime += deltaTime;
     this.frameCount++;
 
+    // Move tasks from nextFrameQueue to priority queues
+    while (this.nextFrameQueue.length > 0) {
+      this.addToQueue(this.nextFrameQueue.shift()!);
+    }
+
     const startTime = performance.now();
     let processedCount = 0;
 
-    while (processedCount < 100) {
+    // To prevent infinite loops or over-processing, but allow enough work
+    const maxProcessed = 500; 
+
+    while (processedCount < maxProcessed) {
       const task = this.getNextTask();
       if (!task) break;
 
       if (task.scheduledTime > this.frameTime) {
-        this.addToQueue(task);
-        break;
+        this.nextFrameQueue.push(task); // Try again next frame
+        processedCount++;
+        continue;
       }
 
       try {
         const status = this.executeTask(task);
-        if (status !== 'complete' && !task.resolved) {
-          this.addToQueue(task);
+        if (status === 'yield') {
+          // Task yielded, move to next frame queue
+          this.addToQueue(task, true);
+        } else if (status === 'pending') {
+          // Task is waiting for a promise, it will re-add itself
+        } else if (status === 'continue') {
+          // Task should continue in the SAME frame (if budget allows)
+          this.addToQueue(task, false);
         }
         processedCount++;
       } catch (err) {
@@ -101,17 +123,18 @@ export class Scheduler {
         this.removeTask(task);
       }
 
-      if (performance.now() - startTime > FRAME_BUDGET_MS * 0.5) {
+      if (performance.now() - startTime > FRAME_BUDGET_MS) {
         break;
       }
     }
 
-    console.log('[ZND] frame complete', {
-      frame: this.frameCount,
-      processedCount,
-      queuedTasks: this.highPriorityQueue.length + this.normalPriorityQueue.length + this.lowPriorityQueue.length,
-      activeTasks: this.tasks.size
-    });
+    if (this.frameCount % 60 === 0) {
+      console.log('[ZND] frame status', {
+        frame: this.frameCount,
+        processedCount,
+        activeTasks: this.tasks.size
+      });
+    }
   }
 
   private getNextTask(): Task | undefined {
@@ -124,7 +147,7 @@ export class Scheduler {
     return this.lowPriorityQueue.shift();
   }
 
-  private executeTask(task: Task): 'complete' | 'yield' | 'pending' {
+  private executeTask(task: Task): 'complete' | 'yield' | 'pending' | 'continue' {
     if (!task.generator) {
       const result = task.handler();
       
@@ -136,34 +159,29 @@ export class Scheduler {
       }
     }
 
-    const frameStart = performance.now();
     const generator = task.generator;
+    const { value, done } = generator.next();
     
-    while (true) {
-      const { value, done } = generator.next();
-      
-      if (done) {
-        this.removeTask(task);
-        return 'complete';
-      }
-
-      if (value === YIELD_TOKEN) {
-        return 'yield';
-      }
-
-      if (value instanceof Promise) {
-        void value.finally(() => {
-          if (!task.resolved && this.tasks.has(`${task.type}:${task.target}:${task.script}`)) {
-            this.addToQueue(task);
-          }
-        });
-        return 'pending';
-      }
-
-      if (performance.now() - frameStart > FRAME_BUDGET_MS * 0.3) {
-        return 'yield';
-      }
+    if (done) {
+      this.removeTask(task);
+      return 'complete';
     }
+
+    if (value === YIELD_TOKEN) {
+      return 'yield';
+    }
+
+    if (value instanceof Promise) {
+      void value.finally(() => {
+        if (!task.resolved && this.tasks.has(`${task.type}:${task.target}:${task.script}`)) {
+          this.addToQueue(task, false); // Add to current frame if possible, or it will be picked up next frame if budget exhausted
+        }
+      });
+      return 'pending';
+    }
+
+    // Default to continue in the same frame for simple steps
+    return 'continue';
   }
 
   private removeTask(task: Task): void {
@@ -203,10 +221,12 @@ export function* yieldToScheduler(): Generator<Symbol> {
   yield YIELD_TOKEN;
 }
 
-export function* wait(duration: number): Generator<number> {
+export function* wait(duration: number): Generator<Symbol> {
   const start = performance.now();
+  // Always yield at least once
+  yield YIELD_TOKEN;
   while (performance.now() - start < duration * 1000) {
-    yield YIELD_TOKEN as unknown as number;
+    yield YIELD_TOKEN;
   }
 }
 
