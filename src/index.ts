@@ -61,6 +61,10 @@ export class ZNDCompiler {
     benchmark.startMetric('project_parse');
     const parseResult = this.parser.parse(project.json);
     benchmark.endMetric('project_parse');
+    console.log('[ZND] project parse complete', {
+      projectId: project.id,
+      targetCount: project.json.targets.length
+    });
 
     if (this.config.debugMode) {
       console.log('IR parsed:', parseResult);
@@ -69,6 +73,9 @@ export class ZNDCompiler {
     benchmark.startMetric('project_compile');
     this.compiled = this.generator.generateProgram(parseResult);
     benchmark.endMetric('project_compile');
+    console.log('[ZND] project compile complete', {
+      scriptCount: this.compiled.scripts.length
+    });
 
     if (this.config.debugMode) {
       console.log('Compiled:', this.compiled);
@@ -79,22 +86,30 @@ export class ZNDCompiler {
     }
 
     const loadedAssets = await this.loadAssets(project);
+    console.log('[ZND] asset load complete', {
+      costumeCount: loadedAssets.costumes.size,
+      soundCount: loadedAssets.sounds.size
+    });
 
     await this.engine.load(this.compiled, loadedAssets, this.config.canvas);
+    console.log('[ZND] runtime initialization complete');
 
     if (this.config.autoStart) {
       this.engine.start();
       this.startFPSMonitoring();
+      console.log('[ZND] auto start complete');
     }
   }
 
   start(): void {
     this.engine.start();
     this.startFPSMonitoring();
+    console.log('[ZND] manual start complete');
   }
 
   stop(): void {
     this.engine.stop();
+    console.log('[ZND] stop complete');
   }
 
   broadcast(message: string, args?: any[]): void {

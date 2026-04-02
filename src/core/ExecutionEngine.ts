@@ -382,6 +382,9 @@ export class ExecutionEngine {
     }
 
     await renderer.init(canvas);
+    console.log('[ZND] renderer initialization complete', {
+      gpu: renderer.isGPUAvailable()
+    });
 
     for (const sprite of program.ir.orderedSprites) {
       const instance = this.spritePool.acquire();
@@ -407,6 +410,11 @@ export class ExecutionEngine {
       instance.costumeIndex = clampIndex(sprite.defaultCostumeIndex, Math.max(runtimeCostumes.length, 1));
 
       sprites.set(sprite.id, instance);
+      console.log('[ZND] sprite initialization complete', {
+        spriteId: sprite.id,
+        costumeCount: runtimeCostumes.length,
+        isStage: sprite.isStage
+      });
     }
 
     this.context = {
@@ -419,6 +427,11 @@ export class ExecutionEngine {
       scheduler,
       stopFlags: new Set()
     };
+    console.log('[ZND] engine load complete', {
+      spriteCount: sprites.size,
+      globalVariableCount: variables.size,
+      globalListCount: lists.size
+    });
   }
 
   start(): void {
@@ -426,6 +439,7 @@ export class ExecutionEngine {
     this.running = true;
     this.lastFrameTime = performance.now();
     this.startHatScripts();
+    console.log('[ZND] engine start complete');
     this.executeFrame();
   }
 
@@ -435,6 +449,7 @@ export class ExecutionEngine {
       cancelAnimationFrame(this.frameId);
     }
     this.context?.scheduler.cancelAll();
+    console.log('[ZND] engine stop complete');
   }
 
   private executeFrame = (): void => {
@@ -458,9 +473,16 @@ export class ExecutionEngine {
       }
 
       this.context.renderer.renderSprite(sprite);
+      console.log('[ZND] sprite render complete', {
+        spriteId: sprite.id,
+        x: sprite.x,
+        y: sprite.y,
+        costume: sprite.costumeName
+      });
 
       if (sprite.isStage) {
         this.context.renderer.renderPenLayer();
+        console.log('[ZND] pen layer render complete');
       }
     }
 
@@ -533,6 +555,11 @@ export class ExecutionEngine {
         () => this.runScript(script),
         'normal'
       );
+      console.log('[ZND] hat script scheduled', {
+        targetId: script.targetId,
+        scriptId: script.id,
+        hatOpcode: script.hatOpcode
+      });
     }
   }
 
@@ -546,7 +573,16 @@ export class ExecutionEngine {
       return;
     }
 
+    console.log('[ZND] script execution start', {
+      targetId: script.targetId,
+      scriptId: script.id,
+      hatOpcode: script.hatOpcode
+    });
     yield* this.runBlockChain(sprite, script.topBlock.next);
+    console.log('[ZND] script execution complete', {
+      targetId: script.targetId,
+      scriptId: script.id
+    });
   }
 
   private *runBlockChain(sprite: SpriteInstance, startBlock: IRBlock | null): Generator<symbol | number | void> {
@@ -646,6 +682,16 @@ export class ExecutionEngine {
           sprite.setPenSize(this.getNumericInput(current.inputs.SIZE));
           break;
       }
+
+      console.log('[ZND] block execution complete', {
+        spriteId: sprite.id,
+        opcode: current.opcode,
+        x: sprite.x,
+        y: sprite.y,
+        direction: sprite.direction,
+        visible: sprite.visible,
+        costume: sprite.costumeName
+      });
 
       current = current.next;
     }

@@ -91,7 +91,10 @@ export class Scheduler {
       }
 
       try {
-        this.executeTask(task);
+        const status = this.executeTask(task);
+        if (status !== 'complete' && !task.resolved) {
+          this.addToQueue(task);
+        }
         processedCount++;
       } catch (err) {
         console.error(`Task error: ${task.id}`, err);
@@ -102,6 +105,13 @@ export class Scheduler {
         break;
       }
     }
+
+    console.log('[ZND] frame complete', {
+      frame: this.frameCount,
+      processedCount,
+      queuedTasks: this.highPriorityQueue.length + this.normalPriorityQueue.length + this.lowPriorityQueue.length,
+      activeTasks: this.tasks.size
+    });
   }
 
   private getNextTask(): Task | undefined {
@@ -114,7 +124,7 @@ export class Scheduler {
     return this.lowPriorityQueue.shift();
   }
 
-  private executeTask(task: Task): void {
+  private executeTask(task: Task): 'complete' | 'yield' | 'pending' {
     if (!task.generator) {
       const result = task.handler();
       
@@ -122,34 +132,36 @@ export class Scheduler {
         task.generator = result as unknown as Generator;
       } else {
         this.removeTask(task);
-        return;
+        return 'complete';
       }
     }
 
     const frameStart = performance.now();
-    let generator = task.generator;
+    const generator = task.generator;
     
     while (true) {
       const { value, done } = generator.next();
       
       if (done) {
         this.removeTask(task);
-        return;
+        return 'complete';
       }
 
       if (value === YIELD_TOKEN) {
-        if (performance.now() - frameStart > FRAME_BUDGET_MS * 0.3) {
-          return;
-        }
-        continue;
+        return 'yield';
       }
 
       if (value instanceof Promise) {
-        return;
+        void value.finally(() => {
+          if (!task.resolved && this.tasks.has(`${task.type}:${task.target}:${task.script}`)) {
+            this.addToQueue(task);
+          }
+        });
+        return 'pending';
       }
 
       if (performance.now() - frameStart > FRAME_BUDGET_MS * 0.3) {
-        return;
+        return 'yield';
       }
     }
   }
