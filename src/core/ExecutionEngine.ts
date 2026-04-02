@@ -593,6 +593,12 @@ export class ExecutionEngine {
         case 'motion_movesteps':
           sprite.move(this.getNumericInput(current.inputs.STEPS));
           break;
+        case 'motion_gotoxy':
+          sprite.gotoXY(
+            this.getNumericInput(current.inputs.X),
+            this.getNumericInput(current.inputs.Y)
+          );
+          break;
         case 'motion_setx':
           sprite.x = this.getNumericInput(current.inputs.X);
           break;
@@ -608,6 +614,9 @@ export class ExecutionEngine {
         case 'motion_pointindirection':
           sprite.direction = this.getNumericInput(current.inputs.DIRECTION);
           break;
+        case 'motion_pointtowards':
+          this.pointSpriteTowards(sprite, this.getStringInput(current.inputs.TOWARDS));
+          break;
         case 'motion_turnright':
           sprite.direction += this.getNumericInput(current.inputs.DEGREES);
           break;
@@ -617,6 +626,25 @@ export class ExecutionEngine {
         case 'motion_ifonedgebounce':
           sprite.ifOnEdgeBounce();
           break;
+        case 'motion_goto':
+          this.moveSpriteToTarget(sprite, this.getStringInput(current.inputs.TO));
+          break;
+        case 'motion_glidesecstoxy':
+          yield* wait(this.getNumericInput(current.inputs.SECS));
+          sprite.gotoXY(
+            this.getNumericInput(current.inputs.X),
+            this.getNumericInput(current.inputs.Y)
+          );
+          break;
+        case 'motion_glideto':
+          yield* wait(this.getNumericInput(current.inputs.SECS));
+          this.moveSpriteToTarget(sprite, this.getStringInput(current.inputs.TO));
+          break;
+        case 'motion_setrotationstyle': {
+          const style = typeof current.fields.STYLE === 'string' ? current.fields.STYLE : 'all-around';
+          sprite.rotationStyle = style as SpriteInstance['rotationStyle'];
+          break;
+        }
         case 'looks_show':
           sprite.visible = true;
           break;
@@ -737,12 +765,65 @@ export class ExecutionEngine {
     return Number.isFinite(numeric) ? numeric : 0;
   }
 
+  private getStringInput(input: IRValue | IRValue[] | undefined): string {
+    const value = this.getInputValue(input);
+    return typeof value === 'string' ? value : String(value ?? '');
+  }
+
   private getCostumeSelector(input: IRValue | IRValue[] | undefined): number | string {
     const value = this.getInputValue(input);
     if (typeof value === 'number' || typeof value === 'string') {
       return value;
     }
     return 0;
+  }
+
+  private moveSpriteToTarget(sprite: SpriteInstance, targetName: string): void {
+    const targetXY = this.getTargetXY(targetName);
+    if (!targetXY) {
+      return;
+    }
+    sprite.gotoXY(targetXY[0], targetXY[1]);
+  }
+
+  private pointSpriteTowards(sprite: SpriteInstance, targetName: string): void {
+    if (targetName === '_random_') {
+      sprite.direction = Math.round(Math.random() * 360) - 180;
+      return;
+    }
+
+    const targetXY = this.getTargetXY(targetName);
+    if (!targetXY) {
+      return;
+    }
+
+    const dx = targetXY[0] - sprite.x;
+    const dy = targetXY[1] - sprite.y;
+    sprite.direction = 90 - (Math.atan2(dy, dx) * 180 / Math.PI);
+  }
+
+  private getTargetXY(targetName: string): [number, number] | null {
+    if (!this.context) {
+      return null;
+    }
+
+    if (targetName === '_random_') {
+      return [
+        Math.round(480 * (Math.random() - 0.5)),
+        Math.round(360 * (Math.random() - 0.5))
+      ];
+    }
+
+    if (targetName === '_mouse_') {
+      return [0, 0];
+    }
+
+    const targetSprite = this.context.sprites.get(targetName);
+    if (!targetSprite) {
+      return null;
+    }
+
+    return [targetSprite.x, targetSprite.y];
   }
 }
 

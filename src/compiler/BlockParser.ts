@@ -287,40 +287,9 @@ export class BlockParser {
       for (const [name, input] of Object.entries(block.inputs)) {
         if (Array.isArray(input)) {
           const [, value] = input;
-          if (typeof value === 'string') {
-            if (this.isBlockReference(value)) {
-              const refBlock = blockById.get(value);
-              if (refBlock) {
-                inputs[name] = {
-                  type: 'block',
-                  value: value,
-                  blockRef: value,
-                  resolvedBlock: this.parseBlock(refBlock, blockById)
-                };
-              }
-            } else {
-              inputs[name] = { type: 'literal', value };
-            }
-          } else if (Array.isArray(value)) {
-            const subInputs: IRValue[] = [];
-            for (const item of value) {
-              if (typeof item === 'string') {
-                if (this.isBlockReference(item)) {
-                  const refBlock = blockById.get(item);
-                  if (refBlock) {
-                    subInputs.push({
-                      type: 'block',
-                      value: item,
-                      blockRef: item,
-                      resolvedBlock: this.parseBlock(refBlock, blockById)
-                    });
-                  }
-                } else {
-                  subInputs.push({ type: 'literal', value: item });
-                }
-              }
-            }
-            inputs[name] = subInputs;
+          const parsed = this.parseInputValue(value, blockById);
+          if (parsed) {
+            inputs[name] = parsed;
           }
         }
       }
@@ -360,6 +329,61 @@ export class BlockParser {
 
   private isBlockReference(value: string): boolean {
     return value.length > 0 && !value.startsWith('_') && !value.startsWith('-');
+  }
+
+  private parseInputValue(
+    value: unknown,
+    blockById: Map<string, ScratchBlock>
+  ): IRValue | IRValue[] | null {
+    if (typeof value === 'string') {
+      if (this.isBlockReference(value)) {
+        const refBlock = blockById.get(value);
+        if (refBlock) {
+          return {
+            type: 'block',
+            value,
+            blockRef: value,
+            resolvedBlock: this.parseBlock(refBlock, blockById)
+          };
+        }
+      }
+      return { type: 'literal', value };
+    }
+
+    if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+      return { type: 'literal', value };
+    }
+
+    if (!Array.isArray(value)) {
+      return null;
+    }
+
+    if (value.length >= 2 && typeof value[0] === 'number') {
+      const primaryValue = value[1];
+      const parsedPrimary = this.parseInputValue(primaryValue, blockById);
+      if (parsedPrimary) {
+        return parsedPrimary;
+      }
+    }
+
+    const parsedValues: IRValue[] = [];
+    for (const item of value) {
+      const parsed = this.parseInputValue(item, blockById);
+      if (!parsed) {
+        continue;
+      }
+      if (Array.isArray(parsed)) {
+        parsedValues.push(...parsed);
+      } else {
+        parsedValues.push(parsed);
+      }
+    }
+
+    if (parsedValues.length === 0) {
+      return null;
+    }
+
+    return parsedValues.length === 1 ? parsedValues[0] : parsedValues;
   }
 
   private getIRNodeType(opcode: string): IRBlock['type'] {
