@@ -49,9 +49,11 @@ export class BlockParser {
     this.blockMap.clear();
 
     for (const target of projectJson.targets) {
-      for (const block of Object.values(target.blocks)) {
-        if (block && typeof block === 'object') {
-          this.blockMap.set(block.id, block);
+      if (target.blocks && typeof target.blocks === 'object') {
+        for (const block of Object.values(target.blocks)) {
+          if (block && typeof block === 'object') {
+            this.blockMap.set(block.id, block);
+          }
         }
       }
     }
@@ -170,7 +172,9 @@ export class BlockParser {
       });
     }
 
-    const scriptsByTopBlock = this.findTopBlocks(target.blocks);
+    const scriptsByTopBlock = target.blocks && typeof target.blocks === 'object' 
+      ? this.findTopBlocks(target.blocks)
+      : [];
 
     for (const topBlock of scriptsByTopBlock) {
       if (topBlock && this.isHatBlock(topBlock)) {
@@ -203,6 +207,8 @@ export class BlockParser {
   private findTopBlocks(blocks: Record<string, ScratchBlock | null>): ScratchBlock[] {
     const blockById = new Map<string, ScratchBlock>();
     const children = new Set<string>();
+
+    if (!blocks) return [];
 
     for (const block of Object.values(blocks)) {
       if (block && typeof block === 'object') {
@@ -411,7 +417,7 @@ export class BlockParser {
     for (const target of json.targets) {
       estimate += 500;
 
-      for (const block of Object.values(target.blocks)) {
+      for (const block of Object.values(target.blocks || {})) {
         if (block) estimate += 200;
       }
 
