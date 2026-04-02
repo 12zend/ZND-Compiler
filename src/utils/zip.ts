@@ -37,11 +37,17 @@ export async function unzip(buffer: ArrayBuffer): Promise<{ files: { name: strin
       content = uint8Array.slice(offset, offset + uncompressedSize).buffer;
     } else if (compressionMethod === 8) {
       const compressed = uint8Array.slice(offset, offset + compressedSize);
-      const inflated = pako.inflate(compressed);
+      let inflated: Uint8Array;
+      try {
+        inflated = pako.inflate(compressed);
+      } catch {
+        inflated = pako.inflateRaw(compressed);
+      }
+      const buf = inflated.buffer.slice(inflated.byteOffset, inflated.byteOffset + inflated.byteLength) as ArrayBuffer;
       if (name.endsWith('.json') || name.endsWith('.txt') || name.endsWith('.xml')) {
-        content = textDecoder.decode(inflated.buffer);
+        content = textDecoder.decode(buf);
       } else {
-        content = inflated.buffer;
+        content = buf;
       }
     } else {
       throw new Error(`Unsupported compression method: ${compressionMethod}`);
