@@ -329,6 +329,8 @@ export class ExecutionEngine {
   private lastFrameTime: number = 0;
   private deltaTime: number = 0;
   private frameTime: number = 0;
+  private targetFPS: number = 30;
+  private frameInterval: number = 1000 / 30;
 
   private spritePool: ObjectPool<SpriteInstance>;
   private assetPool: ObjectPool<any>;
@@ -452,12 +454,28 @@ export class ExecutionEngine {
     console.log('[ZND] engine stop complete');
   }
 
+  setTargetFPS(fps: number): void {
+    this.targetFPS = fps > 0 ? fps : 30;
+    this.frameInterval = 1000 / this.targetFPS;
+  }
+
+  getTargetFPS(): number {
+    return this.targetFPS;
+  }
+
   private executeFrame = (): void => {
     if (!this.running || !this.context) return;
 
     const now = performance.now();
-    this.deltaTime = (now - this.lastFrameTime) / 1000;
-    this.lastFrameTime = now;
+    const elapsed = now - this.lastFrameTime;
+
+    if (elapsed < this.frameInterval) {
+      this.frameId = requestAnimationFrame(this.executeFrame);
+      return;
+    }
+
+    this.deltaTime = elapsed / 1000;
+    this.lastFrameTime = now - (elapsed % this.frameInterval);
     this.frameTime += this.deltaTime;
 
     this.context.scheduler.processFrame(this.deltaTime);
