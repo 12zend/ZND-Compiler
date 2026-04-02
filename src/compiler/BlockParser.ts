@@ -64,9 +64,9 @@ export class BlockParser {
     const globalLists = new Map<string, IRList>();
 
     let hasCloudVariables = false;
-    let hasPenExtension = false;
-    let hasVideoExtension = false;
-    let hasTextToSpeech = false;
+    let hasPenExtension = projectJson.extensions.includes('pen');
+    let hasVideoExtension = projectJson.extensions.includes('videoSensing');
+    let hasTextToSpeech = projectJson.extensions.includes('text2speech');
     let totalComplexity = 0;
 
     for (const target of projectJson.targets) {
@@ -100,6 +100,9 @@ export class BlockParser {
 
       for (const script of sprite.scripts) {
         totalComplexity += this.analyzeScriptComplexity(script);
+        if (this.scriptUsesOpcodePrefix(script.topBlock, 'pen_')) {
+          hasPenExtension = true;
+        }
       }
     }
 
@@ -159,6 +162,7 @@ export class BlockParser {
         dataFormat: costume.dataFormat,
         rotationCenterX: costume.rotationCenterX,
         rotationCenterY: costume.rotationCenterY,
+        bitmapResolution: costume.bitmapResolution,
         assetRef: costume.md5ext
       });
     }
@@ -200,6 +204,7 @@ export class BlockParser {
       defaultRotationStyle: target.rotationStyle,
       defaultVisible: target.visible,
       defaultDraggable: target.draggable,
+      defaultCostumeIndex: target.currentCostume,
       isStage: target.isStage
     };
   }
@@ -431,6 +436,33 @@ export class BlockParser {
     }
 
     return estimate;
+  }
+
+  private scriptUsesOpcodePrefix(block: IRBlock, prefix: string): boolean {
+    const stack: IRBlock[] = [block];
+
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      if (current.opcode.startsWith(prefix)) {
+        return true;
+      }
+      if (current.next) {
+        stack.push(current.next);
+      }
+      for (const input of Object.values(current.inputs)) {
+        const values = Array.isArray(input) ? input : [input];
+        for (const value of values) {
+          if (value.blockRef) {
+            const refBlock = this.blockMap.get(value.blockRef);
+            if (refBlock) {
+              stack.push(this.parseBlock(refBlock, this.blockMap));
+            }
+          }
+        }
+      }
+    }
+
+    return false;
   }
 
   analyzeStatic(script: IRScript): StaticAnalysisResult {

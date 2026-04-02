@@ -106,7 +106,7 @@ export interface AssetReference {
 }
 
 export interface LoadedAssets {
-  costumes: Map<string, HTMLImageElement | SVGElement>;
+  costumes: Map<string, HTMLImageElement>;
   sounds: Map<string, AudioBuffer>;
   vectors: Map<string, Path2D>;
 }

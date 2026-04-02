@@ -24,6 +24,7 @@ export interface IRCostume {
   dataFormat: string;
   rotationCenterX: number;
   rotationCenterY: number;
+  bitmapResolution?: number;
   assetRef: string;
 }
 
@@ -114,6 +115,7 @@ export interface IRSprite {
   defaultRotationStyle: string;
   defaultVisible: boolean;
   defaultDraggable: boolean;
+  defaultCostumeIndex: number;
   isStage: boolean;
 }
 

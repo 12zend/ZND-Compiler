@@ -3,7 +3,7 @@ import { BlockParser } from './compiler/BlockParser';
 import { JSCodeGenerator } from './compiler/JSCodeGenerator';
 import { ExecutionEngine } from './core/ExecutionEngine';
 import { benchmark, Benchmark } from './utils/benchmark';
-import type { CompiledProgram, SB3Project } from './types';
+import type { CompiledProgram, LoadedAssets, SB3Project } from './types';
 
 export interface ZNDConfig {
   canvas: HTMLCanvasElement;
@@ -78,11 +78,7 @@ export class ZNDCompiler {
       throw new Error('Compilation failed');
     }
 
-    const loadedAssets = {
-      costumes: new Map<string, HTMLImageElement | SVGElement>(),
-      sounds: new Map<string, AudioBuffer>(),
-      vectors: new Map<string, Path2D>()
-    };
+    const loadedAssets = await this.loadAssets(project);
 
     await this.engine.load(this.compiled, loadedAssets, this.config.canvas);
 
@@ -137,6 +133,33 @@ export class ZNDCompiler {
 
     requestAnimationFrame(updateFPS);
   }
+
+  private async loadAssets(project: SB3Project): Promise<LoadedAssets> {
+    const costumes = new Map<string, HTMLImageElement>();
+    const sounds = new Map<string, AudioBuffer>();
+    const vectors = new Map<string, Path2D>();
+
+    const costumeRefs = new Set<string>();
+    for (const target of project.json.targets) {
+      for (const costume of target.costumes) {
+        costumeRefs.add(costume.md5ext);
+      }
+    }
+
+    await Promise.all(
+      Array.from(costumeRefs).map(async (assetRef) => {
+        const asset = project.assets.get(assetRef);
+        if (!asset) {
+          return;
+        }
+
+        const image = await loadImageFromAsset(assetRef, asset);
+        costumes.set(assetRef, image);
+      })
+    );
+
+    return { costumes, sounds, vectors };
+  }
 }
 
 export function createZND(config: ZNDConfig): ZNDInstance {
@@ -155,4 +178,30 @@ export function createZND(config: ZNDConfig): ZNDInstance {
     dispose: () => compiler.dispose(),
     benchmark
   };
+}
+
+function getMimeType(assetRef: string): string {
+  const lower = assetRef.toLowerCase();
+  if (lower.endsWith('.svg')) return 'image/svg+xml';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  return 'image/png';
+}
+
+async function loadImageFromAsset(assetRef: string, asset: ArrayBuffer): Promise<HTMLImageElement> {
+  const blob = new Blob([asset], { type: getMimeType(assetRef) });
+  const url = URL.createObjectURL(blob);
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.decoding = 'async';
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error(`Failed to decode asset: ${assetRef}`));
+      img.src = url;
+    });
+    return image;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }

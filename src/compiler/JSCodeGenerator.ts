@@ -120,7 +120,7 @@ export class JSCodeGenerator {
       `  rotationStyle: '${sprite.defaultRotationStyle}',`,
       `  visible: ${sprite.defaultVisible},`,
       `  draggable: ${sprite.defaultDraggable},`,
-      `  costumeIndex: 0,`,
+      `  costumeIndex: ${sprite.defaultCostumeIndex},`,
       `  layerOrder: ${sprite.isStage ? -1 : 0},`,
     ];
 
@@ -520,26 +520,44 @@ export class JSCodeGenerator {
   }
 
   private generatePenBlock(block: IRBlock, ctx: GenerationContext): string {
+    const sprite = this.getSpriteVarName(ctx.sprite.id);
     let code = '';
 
     switch (block.opcode) {
       case 'pen_penup':
-        code = `$pen.down = false;`;
+      case 'pen_penUp':
+        code = `${sprite}.penUp();`;
         break;
       case 'pen_pendown':
-        code = `$pen.down = true;`;
+      case 'pen_penDown':
+        code = `${sprite}.penDown();`;
+        break;
+      case 'pen_clear':
+        code = `${sprite}.clearPen();`;
         break;
       case 'pen_setpencolortocolor':
-        code = `$pen.color = '${block.fields.COLOR?.name || '#000000'}';`;
+      case 'pen_setPenColorToColor':
+        code = `${sprite}.setPenColor(${this.stringifyField(block.fields.COLOR, '#000000')});`;
         break;
       case 'pen_changepencolorby':
-        code = `$pen.changeColor(${this.getOperand(block.inputs.COLOR)});`;
+        code = `${sprite}.changePenColor(${this.getOperand(block.inputs.COLOR)});`;
+        break;
+      case 'pen_changePenColorParamBy':
+        code = `${sprite}.changePenColorParam(${this.stringifyField(block.fields.COLOR_PARAM, 'color')}, ${this.getOperand(block.inputs.VALUE)});`;
+        break;
+      case 'pen_setPenColorParamTo':
+        code = `${sprite}.setPenColorParam(${this.stringifyField(block.fields.COLOR_PARAM, 'color')}, ${this.getOperand(block.inputs.VALUE)});`;
         break;
       case 'pen_changepensizeby':
-        code = `$pen.size += ${this.getOperand(block.inputs.SIZE)};`;
+      case 'pen_changePenSizeBy':
+        code = `${sprite}.changePenSize(${this.getOperand(block.inputs.SIZE)});`;
+        break;
+      case 'pen_setpensizeto':
+      case 'pen_setPenSizeTo':
+        code = `${sprite}.setPenSize(${this.getOperand(block.inputs.SIZE)});`;
         break;
       case 'pen_stamp':
-        code = `$pen.stamp();`;
+        code = `${sprite}.stamp();`;
         break;
     }
 
@@ -623,6 +641,10 @@ export class JSCodeGenerator {
 
   private sanitizeName(name: string): string {
     return name.replace(/[^a-zA-Z0-9_]/g, '_');
+  }
+
+  private stringifyField(value: unknown, fallback: string): string {
+    return JSON.stringify(typeof value === 'string' ? value : fallback);
   }
 
   private nextLabel(): string {
