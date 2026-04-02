@@ -29,7 +29,7 @@ export interface ScratchTarget {
   variables: Record<string, [string, PrimitiveValue]>;
   lists: Record<string, [string, ListValue]>;
   broadcasts: Record<string, string>;
-  blocks: ScratchBlock[];
+  blocks: Record<string, ScratchBlock | null>;
   comments: Record<string, unknown>;
   currentCostume: number;
   costumes: Costume[];

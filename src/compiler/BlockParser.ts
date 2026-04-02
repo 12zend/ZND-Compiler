@@ -49,7 +49,7 @@ export class BlockParser {
     this.blockMap.clear();
 
     for (const target of projectJson.targets) {
-      for (const block of target.blocks) {
+      for (const block of Object.values(target.blocks)) {
         if (block && typeof block === 'object') {
           this.blockMap.set(block.id, block);
         }
@@ -174,7 +174,7 @@ export class BlockParser {
 
     for (const topBlock of scriptsByTopBlock) {
       if (topBlock && this.isHatBlock(topBlock)) {
-        const script = this.parseScript(topBlock, target.name, target.blocks);
+        const script = this.parseScript(topBlock, target.name, target.blocks as Record<string, ScratchBlock>);
         if (script) {
           scripts.push(script);
         }
@@ -200,11 +200,11 @@ export class BlockParser {
     };
   }
 
-  private findTopBlocks(blocks: ScratchBlock[]): ScratchBlock[] {
+  private findTopBlocks(blocks: Record<string, ScratchBlock | null>): ScratchBlock[] {
     const blockById = new Map<string, ScratchBlock>();
     const children = new Set<string>();
 
-    for (const block of blocks) {
+    for (const block of Object.values(blocks)) {
       if (block && typeof block === 'object') {
         blockById.set(block.id, block);
         if (block.parent) children.add(block.parent);
@@ -225,9 +225,9 @@ export class BlockParser {
     return HAT_OPCODES.has(block.opcode);
   }
 
-  private parseScript(topBlock: ScratchBlock, targetId: string, blocks: ScratchBlock[]): IRScript | null {
+  private parseScript(topBlock: ScratchBlock, targetId: string, blocks: Record<string, ScratchBlock>): IRScript | null {
     const blockById = new Map<string, ScratchBlock>();
-    for (const block of blocks) {
+    for (const block of Object.values(blocks)) {
       if (block && typeof block === 'object') {
         blockById.set(block.id, block);
       }
@@ -411,7 +411,7 @@ export class BlockParser {
     for (const target of json.targets) {
       estimate += 500;
 
-      for (const block of target.blocks) {
+      for (const block of Object.values(target.blocks)) {
         if (block) estimate += 200;
       }
 
