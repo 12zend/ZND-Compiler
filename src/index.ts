@@ -10,7 +10,7 @@ export interface ZNDConfig {
   width?: number;
   height?: number;
   autoStart?: boolean;
-  targetFPS?: number;
+  maxFPS?: number;
   enableWebGL?: boolean;
   enableCaching?: boolean;
   debugMode?: boolean;
@@ -24,7 +24,6 @@ export interface ZNDInstance {
   stop: () => void;
   broadcast: (message: string, args?: any[]) => void;
   getFPS: () => number;
-  setTargetFPS: (fps: number) => void;
   dispose: () => void;
   benchmark: Benchmark;
 }
@@ -44,7 +43,7 @@ export class ZNDCompiler {
       width: config.width || 480,
       height: config.height || 360,
       autoStart: config.autoStart ?? true,
-      targetFPS: config.targetFPS || 30,
+      maxFPS: config.maxFPS || 60,
       enableWebGL: config.enableWebGL ?? true,
       enableCaching: config.enableCaching ?? true,
       debugMode: config.debugMode ?? false
@@ -93,8 +92,7 @@ export class ZNDCompiler {
     });
 
     await this.engine.load(this.compiled, loadedAssets, this.config.canvas);
-    this.engine.setTargetFPS(this.config.targetFPS);
-    console.log('[ZND] runtime initialization complete', { targetFPS: this.config.targetFPS });
+    console.log('[ZND] runtime initialization complete');
 
     if (this.config.autoStart) {
       this.engine.start();
@@ -121,11 +119,6 @@ export class ZNDCompiler {
   getFPS(): number {
     if (this.fpsHistory.length === 0) return 0;
     return this.fpsHistory.reduce((a, b) => a + b, 0) / this.fpsHistory.length;
-  }
-
-  setTargetFPS(fps: number): void {
-    this.config.targetFPS = fps;
-    this.engine.setTargetFPS(fps);
   }
 
   dispose(): void {
@@ -197,7 +190,6 @@ export function createZND(config: ZNDConfig): ZNDInstance {
     stop: () => compiler.stop(),
     broadcast: (msg, args) => compiler.broadcast(msg, args),
     getFPS: () => compiler.getFPS(),
-    setTargetFPS: (fps) => compiler.setTargetFPS(fps),
     dispose: () => compiler.dispose(),
     benchmark
   };
