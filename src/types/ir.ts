@@ -98,6 +98,7 @@ export interface IRValue {
   type: 'literal' | 'variable' | 'list' | 'block' | 'parameter' | 'broadcast';
   value: PrimitiveValue | string;
   blockRef?: string;
+  resolvedBlock?: IRBlock;
 }
 
 export interface IRSprite {

@@ -174,7 +174,9 @@ export class WebGLRenderer {
 
       if (this.penTextureDirty) {
         this.gl.bindTexture(this.gl.TEXTURE_2D, this.penTexture);
+        this.gl.pixelStorei(this.gl.UNPACK_FLIP_Y_WEBGL, 1);
         this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, this.penCanvas);
+        this.gl.pixelStorei(this.gl.UNPACK_FLIP_Y_WEBGL, 0);
         this.penTextureDirty = false;
       }
 
@@ -241,7 +243,9 @@ export class WebGLRenderer {
     this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR);
     this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR);
     this.gl.pixelStorei(this.gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
+    this.gl.pixelStorei(this.gl.UNPACK_FLIP_Y_WEBGL, 1);
     this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, image);
+    this.gl.pixelStorei(this.gl.UNPACK_FLIP_Y_WEBGL, 0);
 
     this.textures.set(id, texture);
     return texture;

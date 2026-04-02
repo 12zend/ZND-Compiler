@@ -1,8 +1,8 @@
-import type { CompiledProgram, IRCostume } from '../types/ir';
+import type { CompiledProgram, IRBlock, IRCostume, IRScript, IRValue } from '../types/ir';
 import type { LoadedAssets, PrimitiveValue } from '../types';
 import { ObjectPool } from '../utils/datastruct';
 import { WebGLRenderer } from '../renderer/WebGLRenderer';
-import { Scheduler } from './Scheduler';
+import { Scheduler, wait, YIELD_TOKEN } from './Scheduler';
 import { BroadcastSystem } from './BroadcastSystem';
 import { CloneManager } from './CloneManager';
 
@@ -181,6 +181,49 @@ export class SpriteInstance {
   }
 
   goInFrontOf(_spriteId: string): void {
+  }
+
+  ifOnEdgeBounce(): void {
+    const costume = this.getCurrentCostume();
+    const logicalWidth = costume ? (costume.width / (costume.bitmapResolution || 1)) * (this.size / 100) : this.size;
+    const logicalHeight = costume ? (costume.height / (costume.bitmapResolution || 1)) * (this.size / 100) : this.size;
+    const halfWidth = logicalWidth / 2;
+    const halfHeight = logicalHeight / 2;
+
+    let bouncedX = false;
+    let bouncedY = false;
+
+    if (this._x - halfWidth < -240) {
+      this._x = -240 + halfWidth;
+      bouncedX = true;
+    } else if (this._x + halfWidth > 240) {
+      this._x = 240 - halfWidth;
+      bouncedX = true;
+    }
+
+    if (this._y - halfHeight < -180) {
+      this._y = -180 + halfHeight;
+      bouncedY = true;
+    } else if (this._y + halfHeight > 180) {
+      this._y = 180 - halfHeight;
+      bouncedY = true;
+    }
+
+    if (!bouncedX && !bouncedY) {
+      return;
+    }
+
+    let dx = Math.cos((this.direction - 90) * (Math.PI / 180));
+    let dy = Math.sin((this.direction - 90) * (Math.PI / 180));
+
+    if (bouncedX) {
+      dx *= -1;
+    }
+    if (bouncedY) {
+      dy *= -1;
+    }
+
+    this.direction = (Math.atan2(dy, dx) * 180 / Math.PI) + 90;
   }
 
   penDown(): void {
@@ -382,6 +425,7 @@ export class ExecutionEngine {
     if (!this.context || this.running) return;
     this.running = true;
     this.lastFrameTime = performance.now();
+    this.startHatScripts();
     this.executeFrame();
   }
 
@@ -390,6 +434,7 @@ export class ExecutionEngine {
     if (this.frameId) {
       cancelAnimationFrame(this.frameId);
     }
+    this.context?.scheduler.cancelAll();
   }
 
   private executeFrame = (): void => {
@@ -469,6 +514,189 @@ export class ExecutionEngine {
     }
 
     return runtimeCostumes;
+  }
+
+  private startHatScripts(): void {
+    if (!this.context || !this.program) {
+      return;
+    }
+
+    for (const script of this.program.ir.orderedSprites.flatMap((sprite) => sprite.scripts)) {
+      if (script.hatOpcode !== 'event_whenflagclicked') {
+        continue;
+      }
+
+      this.context.scheduler.schedule(
+        'script',
+        script.targetId,
+        script.id,
+        () => this.runScript(script),
+        'normal'
+      );
+    }
+  }
+
+  private *runScript(script: IRScript): Generator<symbol | number | void> {
+    if (!this.context) {
+      return;
+    }
+
+    const sprite = this.context.sprites.get(script.targetId);
+    if (!sprite || !script.topBlock.next) {
+      return;
+    }
+
+    yield* this.runBlockChain(sprite, script.topBlock.next);
+  }
+
+  private *runBlockChain(sprite: SpriteInstance, startBlock: IRBlock | null): Generator<symbol | number | void> {
+    let current = startBlock;
+
+    while (current && this.running) {
+      switch (current.opcode) {
+        case 'motion_movesteps':
+          sprite.move(this.getNumericInput(current.inputs.STEPS));
+          break;
+        case 'motion_setx':
+          sprite.x = this.getNumericInput(current.inputs.X);
+          break;
+        case 'motion_sety':
+          sprite.y = this.getNumericInput(current.inputs.Y);
+          break;
+        case 'motion_changexby':
+          sprite.x += this.getNumericInput(current.inputs.DX);
+          break;
+        case 'motion_changeyby':
+          sprite.y += this.getNumericInput(current.inputs.DY);
+          break;
+        case 'motion_pointindirection':
+          sprite.direction = this.getNumericInput(current.inputs.DIRECTION);
+          break;
+        case 'motion_turnright':
+          sprite.direction += this.getNumericInput(current.inputs.DEGREES);
+          break;
+        case 'motion_turnleft':
+          sprite.direction -= this.getNumericInput(current.inputs.DEGREES);
+          break;
+        case 'motion_ifonedgebounce':
+          sprite.ifOnEdgeBounce();
+          break;
+        case 'looks_show':
+          sprite.visible = true;
+          break;
+        case 'looks_hide':
+          sprite.visible = false;
+          break;
+        case 'looks_switchcostumeto':
+          sprite.setCostume(this.getCostumeSelector(current.inputs.COSTUME));
+          break;
+        case 'looks_nextcostume':
+          sprite.nextCostume();
+          break;
+        case 'control_wait':
+          yield* wait(this.getNumericInput(current.inputs.DURATION));
+          break;
+        case 'control_repeat': {
+          const times = Math.max(0, Math.floor(this.getNumericInput(current.inputs.TIMES)));
+          const substack = this.getSubstack(current.inputs.SUBSTACK);
+          for (let i = 0; i < times && this.running; i++) {
+            if (substack) {
+              yield* this.runBlockChain(sprite, substack);
+            }
+            yield YIELD_TOKEN;
+          }
+          break;
+        }
+        case 'control_forever': {
+          const substack = this.getSubstack(current.inputs.SUBSTACK);
+          while (this.running) {
+            if (substack) {
+              yield* this.runBlockChain(sprite, substack);
+            }
+            yield YIELD_TOKEN;
+          }
+          return;
+        }
+        case 'pen_penup':
+        case 'pen_penUp':
+          sprite.penUp();
+          break;
+        case 'pen_pendown':
+        case 'pen_penDown':
+          sprite.penDown();
+          break;
+        case 'pen_clear':
+          sprite.clearPen();
+          break;
+        case 'pen_stamp':
+          sprite.stamp();
+          break;
+        case 'pen_setpencolortocolor':
+        case 'pen_setPenColorToColor':
+          if (typeof current.fields.COLOR === 'string') {
+            sprite.setPenColor(current.fields.COLOR);
+          }
+          break;
+        case 'pen_changepensizeby':
+        case 'pen_changePenSizeBy':
+          sprite.changePenSize(this.getNumericInput(current.inputs.SIZE));
+          break;
+        case 'pen_setpensizeto':
+        case 'pen_setPenSizeTo':
+          sprite.setPenSize(this.getNumericInput(current.inputs.SIZE));
+          break;
+      }
+
+      current = current.next;
+    }
+  }
+
+  private getSubstack(input: IRValue | IRValue[] | undefined): IRBlock | null {
+    if (!input) {
+      return null;
+    }
+
+    if (Array.isArray(input)) {
+      for (const item of input) {
+        if (item.resolvedBlock) {
+          return item.resolvedBlock;
+        }
+      }
+      return null;
+    }
+
+    return input.resolvedBlock ?? null;
+  }
+
+  private getInputValue(input: IRValue | IRValue[] | undefined): PrimitiveValue | string {
+    if (!input) {
+      return 0;
+    }
+
+    if (Array.isArray(input)) {
+      for (const item of input) {
+        if (item.type === 'literal') {
+          return item.value;
+        }
+      }
+      return 0;
+    }
+
+    return input.value;
+  }
+
+  private getNumericInput(input: IRValue | IRValue[] | undefined): number {
+    const value = this.getInputValue(input);
+    const numeric = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+  }
+
+  private getCostumeSelector(input: IRValue | IRValue[] | undefined): number | string {
+    const value = this.getInputValue(input);
+    if (typeof value === 'number' || typeof value === 'string') {
+      return value;
+    }
+    return 0;
   }
 }
 

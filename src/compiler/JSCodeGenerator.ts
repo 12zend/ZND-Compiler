@@ -196,8 +196,14 @@ export class JSCodeGenerator {
 
   private getSubStack(input: IRValue | IRValue[] | undefined): IRBlock | null {
     if (!input) return null;
+    if (!Array.isArray(input) && input.resolvedBlock) {
+      return input.resolvedBlock;
+    }
     if (Array.isArray(input) && input.length > 0) {
       const first = input[0];
+      if (first?.resolvedBlock) {
+        return first.resolvedBlock;
+      }
       if (first && typeof first === 'object' && 'opcode' in first) {
         return first as unknown as IRBlock;
       }

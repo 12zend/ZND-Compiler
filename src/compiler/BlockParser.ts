@@ -294,7 +294,8 @@ export class BlockParser {
                 inputs[name] = {
                   type: 'block',
                   value: value,
-                  blockRef: value
+                  blockRef: value,
+                  resolvedBlock: this.parseBlock(refBlock, blockById)
                 };
               }
             } else {
@@ -307,7 +308,12 @@ export class BlockParser {
                 if (this.isBlockReference(item)) {
                   const refBlock = blockById.get(item);
                   if (refBlock) {
-                    subInputs.push({ type: 'block', value: item, blockRef: item });
+                    subInputs.push({
+                      type: 'block',
+                      value: item,
+                      blockRef: item,
+                      resolvedBlock: this.parseBlock(refBlock, blockById)
+                    });
                   }
                 } else {
                   subInputs.push({ type: 'literal', value: item });
