@@ -84,7 +84,7 @@ export class ZNDCompiler {
       vectors: new Map<string, Path2D>()
     };
 
-    await this.engine.load(this.compiled, loadedAssets);
+    await this.engine.load(this.compiled, loadedAssets, this.config.canvas);
 
     if (this.config.autoStart) {
       this.engine.start();

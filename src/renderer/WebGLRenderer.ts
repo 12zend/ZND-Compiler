@@ -170,7 +170,7 @@ export class WebGLRenderer {
     if (!this.gl) return;
 
     this.gl.viewport(0, 0, this.canvas!.width, this.canvas!.height);
-    this.gl.clearColor(0, 0, 0, 0);
+    this.gl.clearColor(1, 1, 1, 1);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
     this.gl.enable(this.gl.BLEND);
     this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);

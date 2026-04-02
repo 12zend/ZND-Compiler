@@ -126,7 +126,7 @@ export class ExecutionEngine {
     this.assetPool = new ObjectPool<any>(() => ({}));
   }
 
-  async load(program: CompiledProgram, assets: LoadedAssets): Promise<void> {
+  async load(program: CompiledProgram, assets: LoadedAssets, canvas: HTMLCanvasElement): Promise<void> {
     this.program = program;
 
     const renderer = new WebGLRenderer();
@@ -176,7 +176,7 @@ export class ExecutionEngine {
       stopFlags: new Set()
     };
 
-    await renderer.init(document.createElement('canvas'));
+    await renderer.init(canvas);
   }
 
   start(): void {
