@@ -17,12 +17,8 @@ export async function unzip(buffer: ArrayBuffer): Promise<{ files: { name: strin
     const signature = view.getUint32(offset, true);
     if (signature !== 0x04034b50) break;
     
-    const versionNeeded = view.getUint16(offset + 4, true);
     const flags = view.getUint16(offset + 6, true);
     const compressionMethod = view.getUint16(offset + 8, true);
-    const crc32 = view.getUint32(offset + 14, true);
-    const compressedSize = view.getUint32(offset + 18, true);
-    const uncompressedSize = view.getUint32(offset + 22, true);
     const nameLen = view.getUint16(offset + 26, true);
     const extraLen = view.getUint16(offset + 28, true);
     
@@ -32,16 +28,47 @@ export async function unzip(buffer: ArrayBuffer): Promise<{ files: { name: strin
     const name = textDecoder.decode(nameBytes);
     offset += nameLen + extraLen;
     
+    let compressedSize: number;
+    let uncompressedSize: number;
+    let dataStart = offset;
+    
+    if (flags & 0x08) {
+      let sig = view.getUint32(offset, true);
+      while (sig === 0x08074b50 || sig === 0x02014b50 || sig === 0x06054b50) {
+        if (sig === 0x06054b50) {
+          offset = buffer.byteLength;
+          break;
+        }
+        offset += sig === 0x08074b50 ? 16 : 46;
+        if (offset >= buffer.byteLength) break;
+        sig = view.getUint32(offset, true);
+      }
+      offset -= 12;
+      compressedSize = view.getUint32(offset, true);
+      uncompressedSize = view.getUint32(offset + 4, true);
+      offset += 12;
+      if (offset < buffer.byteLength && view.getUint32(offset, true) === 0x08074b50) {
+        offset += 4;
+      }
+    } else {
+      compressedSize = view.getUint32(offset - nameLen - extraLen - 30 + 18, true);
+      uncompressedSize = view.getUint32(offset - nameLen - extraLen - 30 + 22, true);
+    }
+    
     let content: ArrayBuffer | string;
     if (compressionMethod === 0) {
-      content = uint8Array.slice(offset, offset + uncompressedSize).buffer;
+      content = uint8Array.slice(dataStart, dataStart + uncompressedSize).buffer;
     } else if (compressionMethod === 8) {
-      const compressed = uint8Array.slice(offset, offset + compressedSize);
+      const compressed = uint8Array.slice(dataStart, dataStart + compressedSize);
       let inflated: Uint8Array;
       try {
         inflated = pako.inflate(compressed);
       } catch {
-        inflated = pako.inflateRaw(compressed);
+        try {
+          inflated = pako.inflateRaw(compressed);
+        } catch {
+          inflated = pako.ungzip(compressed);
+        }
       }
       const buf = inflated.buffer.slice(inflated.byteOffset, inflated.byteOffset + inflated.byteLength) as ArrayBuffer;
       if (name.endsWith('.json') || name.endsWith('.txt') || name.endsWith('.xml')) {
@@ -53,7 +80,7 @@ export async function unzip(buffer: ArrayBuffer): Promise<{ files: { name: strin
       throw new Error(`Unsupported compression method: ${compressionMethod}`);
     }
     
-    offset += compressedSize;
+    offset = dataStart + compressedSize;
     
     if (name && !name.endsWith('/')) {
       result.files.push({ name, content });
