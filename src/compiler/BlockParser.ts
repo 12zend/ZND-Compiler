@@ -41,17 +41,20 @@ const COMPLEXITY_WEIGHTS: Record<string, number> = {
   'pen_pendown': 5,
 };
 
+type NormalizedScratchBlock = ScratchBlock & { id: string };
+
 export class BlockParser {
   private interner: StringInterner = new StringInterner();
-  private blockMap: Map<string, ScratchBlock> = new Map();
+  private blockMap: Map<string, NormalizedScratchBlock> = new Map();
 
   parse(projectJson: ScratchProjectJSON): IRProgram {
     this.blockMap.clear();
 
     for (const target of projectJson.targets) {
       if (target.blocks && typeof target.blocks === 'object') {
-        for (const block of Object.values(target.blocks)) {
-          if (block && typeof block === 'object') {
+        for (const [blockId, rawBlock] of Object.entries(target.blocks)) {
+          const block = this.normalizeBlock(blockId, rawBlock);
+          if (block) {
             this.blockMap.set(block.id, block);
           }
         }
@@ -176,13 +179,15 @@ export class BlockParser {
       });
     }
 
-    const scriptsByTopBlock = target.blocks && typeof target.blocks === 'object' 
-      ? this.findTopBlocks(target.blocks)
-      : [];
+    const normalizedBlocks = target.blocks && typeof target.blocks === 'object'
+      ? this.normalizeBlockMap(target.blocks)
+      : {};
+
+    const scriptsByTopBlock = this.findTopBlocks(normalizedBlocks);
 
     for (const topBlock of scriptsByTopBlock) {
       if (topBlock && this.isHatBlock(topBlock)) {
-        const script = this.parseScript(topBlock, target.name, target.blocks as Record<string, ScratchBlock>);
+        const script = this.parseScript(topBlock, target.name, normalizedBlocks);
         if (script) {
           scripts.push(script);
         }
@@ -209,22 +214,12 @@ export class BlockParser {
     };
   }
 
-  private findTopBlocks(blocks: Record<string, ScratchBlock | null>): ScratchBlock[] {
-    const blockById = new Map<string, ScratchBlock>();
-    const children = new Set<string>();
-
+  private findTopBlocks(blocks: Record<string, NormalizedScratchBlock>): NormalizedScratchBlock[] {
     if (!blocks) return [];
 
+    const topBlocks: NormalizedScratchBlock[] = [];
     for (const block of Object.values(blocks)) {
-      if (block && typeof block === 'object') {
-        blockById.set(block.id, block);
-        if (block.parent) children.add(block.parent);
-      }
-    }
-
-    const topBlocks: ScratchBlock[] = [];
-    for (const block of blockById.values()) {
-      if (!block.parent || !children.has(block.id)) {
+      if (block.topLevel || !block.parent) {
         topBlocks.push(block);
       }
     }
@@ -232,16 +227,14 @@ export class BlockParser {
     return topBlocks;
   }
 
-  private isHatBlock(block: ScratchBlock): boolean {
+  private isHatBlock(block: NormalizedScratchBlock): boolean {
     return HAT_OPCODES.has(block.opcode);
   }
 
-  private parseScript(topBlock: ScratchBlock, targetId: string, blocks: Record<string, ScratchBlock>): IRScript | null {
-    const blockById = new Map<string, ScratchBlock>();
+  private parseScript(topBlock: NormalizedScratchBlock, targetId: string, blocks: Record<string, NormalizedScratchBlock>): IRScript | null {
+    const blockById = new Map<string, NormalizedScratchBlock>();
     for (const block of Object.values(blocks)) {
-      if (block && typeof block === 'object') {
-        blockById.set(block.id, block);
-      }
+      blockById.set(block.id, block);
     }
 
     const irTopBlock = this.parseBlock(topBlock, blockById);
@@ -280,7 +273,7 @@ export class BlockParser {
     };
   }
 
-  private parseBlock(block: ScratchBlock, blockById: Map<string, ScratchBlock>): IRBlock {
+  private parseBlock(block: NormalizedScratchBlock, blockById: Map<string, NormalizedScratchBlock>): IRBlock {
     const inputs: Record<string, IRValue | IRValue[]> = {};
 
     if (block.inputs) {
@@ -298,10 +291,11 @@ export class BlockParser {
     const fields: Record<string, any> = {};
     if (block.fields) {
       for (const [name, field] of Object.entries(block.fields)) {
-        if (field && typeof field === 'object') {
-          fields[name] = field.name;
-          if (field.id) {
-            fields[`${name}_id`] = field.id;
+        const fieldValue = this.parseFieldValue(field);
+        if (fieldValue !== null) {
+          fields[name] = fieldValue.value;
+          if (fieldValue.id) {
+            fields[`${name}_id`] = fieldValue.id;
           }
         }
       }
@@ -333,7 +327,7 @@ export class BlockParser {
 
   private parseInputValue(
     value: unknown,
-    blockById: Map<string, ScratchBlock>
+    blockById: Map<string, NormalizedScratchBlock>
   ): IRValue | IRValue[] | null {
     if (typeof value === 'string') {
       if (this.isBlockReference(value)) {
@@ -359,10 +353,11 @@ export class BlockParser {
     }
 
     if (value.length >= 2 && typeof value[0] === 'number') {
-      const primaryValue = value[1];
-      const parsedPrimary = this.parseInputValue(primaryValue, blockById);
-      if (parsedPrimary) {
-        return parsedPrimary;
+      for (let i = 1; i < value.length; i++) {
+        const parsedPrimary = this.parseInputValue(value[i], blockById);
+        if (parsedPrimary) {
+          return parsedPrimary;
+        }
       }
     }
 
@@ -384,6 +379,55 @@ export class BlockParser {
     }
 
     return parsedValues.length === 1 ? parsedValues[0] : parsedValues;
+  }
+
+  private normalizeBlockMap(blocks: ScratchTarget['blocks']): Record<string, NormalizedScratchBlock> {
+    const normalized: Record<string, NormalizedScratchBlock> = {};
+
+    for (const [blockId, rawBlock] of Object.entries(blocks || {})) {
+      const block = this.normalizeBlock(blockId, rawBlock);
+      if (!block) {
+        continue;
+      }
+      normalized[block.id] = block;
+    }
+
+    return normalized;
+  }
+
+  private normalizeBlock(blockId: string, rawBlock: ScratchTarget['blocks'][string]): NormalizedScratchBlock | null {
+    if (!rawBlock || Array.isArray(rawBlock) || typeof rawBlock !== 'object') {
+      return null;
+    }
+
+    return {
+      ...rawBlock,
+      id: rawBlock.id ?? blockId,
+      fields: rawBlock.fields ?? {},
+      inputs: rawBlock.inputs ?? {}
+    };
+  }
+
+  private parseFieldValue(field: ScratchBlock['fields'][string]): { value: PrimitiveValue | string; id?: string } | null {
+    if (Array.isArray(field)) {
+      const [value, id] = field;
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null) {
+        return {
+          value,
+          id: typeof id === 'string' ? id : undefined
+        };
+      }
+      return null;
+    }
+
+    if (!field || typeof field !== 'object') {
+      return null;
+    }
+
+    return {
+      value: field.name,
+      id: field.id
+    };
   }
 
   private getIRNodeType(opcode: string): IRBlock['type'] {

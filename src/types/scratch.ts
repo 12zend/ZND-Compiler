@@ -2,13 +2,19 @@ export type PrimitiveValue = string | number | boolean | null;
 export type ListValue = PrimitiveValue[];
 export type FieldValue = { id?: string; name: string };
 export type InputValue = { name: string; id?: string } | PrimitiveValue;
+export type SerializedFieldValue = [PrimitiveValue | string, string?, unknown?];
+export type SerializedInputValue = [number, unknown, unknown?];
+export type ScratchBlockEntry = ScratchBlock | ScratchPrimitiveBlock | null;
 
 export interface ScratchBlock {
-  id: string;
+  id?: string;
   opcode: string;
   next: string | null;
   parent: string | null;
   shadow: boolean;
+  topLevel?: boolean;
+  x?: number;
+  y?: number;
   mutation?: {
     tagName?: string;
     children?: string[];
@@ -19,9 +25,11 @@ export interface ScratchBlock {
     argumentdefaults?: string;
     warp?: string;
   };
-  fields: Record<string, FieldValue>;
-  inputs: Record<string, [number, InputValue | InputValue[]]>;
+  fields: Record<string, FieldValue | SerializedFieldValue>;
+  inputs: Record<string, SerializedInputValue>;
 }
+
+export type ScratchPrimitiveBlock = SerializedFieldValue;
 
 export interface ScratchTarget {
   isStage: boolean;
@@ -29,7 +37,7 @@ export interface ScratchTarget {
   variables: Record<string, [string, PrimitiveValue]>;
   lists: Record<string, [string, ListValue]>;
   broadcasts: Record<string, string>;
-  blocks: Record<string, ScratchBlock | null>;
+  blocks: Record<string, ScratchBlockEntry>;
   comments: Record<string, unknown>;
   currentCostume: number;
   costumes: Costume[];
